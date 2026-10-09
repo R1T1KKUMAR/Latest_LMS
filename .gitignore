@@ -1,0 +1,32 @@
+# Node dependencies
+node_modules/
+.pnpm-store/
+
+# Local PostgreSQL data
+data/lms-db/
+
+# Next.js build output & generated types
+.next/
+out/
+build/
+dist/
+next-env.d.ts
+*.tsbuildinfo
+
+# Test coverage & reports
+coverage/
+playwright-report/
+test-results/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# System & IDE files
+.DS_Store
+Thumbs.db
+*.log
+
+# Binary documents
+docs/*.pdf
