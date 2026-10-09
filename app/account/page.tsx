@@ -3,6 +3,7 @@ import { PublicFooter, PublicHeader } from "@/components/layout/PublicHeader";
 import { db } from "@/db";
 import * as schema from "@/db/schema";
 import { getCurrentSession } from "@/lib/auth";
+import { type HoldListItem, listHolds, processExpiredHolds } from "@/services/holds";
 import {
   AccountClient,
   type PatronFine,
@@ -69,28 +70,22 @@ export default async function AccountPage() {
       renewalCount: l.renewalCount,
     }));
 
-    // Query holds
-    const rawHolds = await db
-      .select({
-        id: schema.holds.id,
-        status: schema.holds.status,
-        requestDate: schema.holds.requestDate,
-        expiryDate: schema.holds.expiryDate,
-        title: schema.bibRecords.title,
-      })
-      .from(schema.holds)
-      .innerJoin(schema.bibRecords, eq(schema.holds.bibId, schema.bibRecords.id))
-      .where(eq(schema.holds.patronId, p.id))
-      .orderBy(desc(schema.holds.requestDate))
-      .limit(20);
+    // Process expired holds and query patron holds (FR-HO-02, FR-HO-04)
+    try {
+      await processExpiredHolds();
+    } catch {
+      // Non-fatal
+    }
 
-    holds = rawHolds.map((h, i) => ({
+    const rawHolds = await listHolds({ patronId: p.id, limit: 50 });
+
+    holds = rawHolds.map((h: HoldListItem) => ({
       id: h.id,
       title: h.title,
-      requestDate: String(h.requestDate),
-      queuePosition: i + 1,
+      requestDate: String(h.requestDate ?? ""),
+      queuePosition: h.queuePosition ?? 1,
       status: h.status,
-      expiryDate: h.expiryDate ? String(h.expiryDate) : null,
+      expiryDate: h.pickupExpiryDate,
     }));
 
     // Query fines

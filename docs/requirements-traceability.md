@@ -112,24 +112,25 @@ As mandated by `CLAUDE.md`, every requirement preserves its exact requirement ID
 | `FR-CI-06` | All circulation operations execute as single atomic database transactions with SELECT ... FOR UPDATE row locks, audited. | `services/circulation.ts` (`db.transaction`, `for("update")`, `recordAuditLog`) | `tests/integration/circulation.test.ts`, `tests/integration/circulation-routes.test.ts` | Implemented |
 | `FR-CI-07` | Desk shows current loans with Return, Renew, Lost buttons, days remaining / days overdue highlighted in red. | `app/(staff)/circulation/CirculationDeskClient.tsx` | `tests/e2e/circulation-desk.spec.ts` | Implemented |
 
-### 2.8 Reservations (`FR-HO`) — 4 Requirements
+### 2.8 Reservations (`FR-HO`) — 5 Requirements
 
 | Requirement ID | Description | Implementation Location | Test Location | Status |
 | :--- | :--- | :--- | :--- | :---: |
-| `FR-HO-01` | Patron (OPAC) or staff places hold on title only when no copy is AVAILABLE, patron ACTIVE, no existing hold/loan for title, rule allows holds. | `services/holds.ts` (`createHold`) | `tests/integration/holds.test.ts` (`T-16`, `T-17`) | Planned |
-| `FR-HO-02` | Holds queued by request time; queue position visible to staff and patron. | `services/holds.ts`, `repositories/hold.ts` | `tests/integration/holds.test.ts` (`T-17`) | Planned |
-| `FR-HO-03` | On return or cancellation of pickup-ready hold, copy passes to next waiting hold or becomes AVAILABLE / REFERENCE_ONLY. | `services/holds.ts` (`reassignHeldCopy`) | `tests/integration/holds.test.ts` (`T-10`, `T-11`) | Planned |
-| `FR-HO-04` | Holds not collected by expiry date set EXPIRED automatically (dashboard/reservations access); copy released per FR-HO-03. | `services/holds.ts` (`expireUncollectedHolds`) | `tests/integration/holds.test.ts` | Planned |
+| `FR-HO-01` | Patron (OPAC) or staff places hold on title only when no copy is AVAILABLE, patron ACTIVE, no existing hold/loan for title, rule allows holds. | `services/holds.ts` (`placeHold`), `app/api/holds/route.ts` | `tests/integration/holds.test.ts` (`T-16`, `T-17`), `tests/integration/holds-routes.test.ts` | Implemented |
+| `FR-HO-02` | Holds queued by request time; queue position visible to staff and patron. | `services/holds.ts` (`listHolds`), `app/(staff)/reservations/`, `app/account/` | `tests/integration/holds.test.ts` (`T-17`), `tests/integration/holds-routes.test.ts` | Implemented |
+| `FR-HO-03` | On return or cancellation of pickup-ready hold, copy passes to next waiting hold or becomes AVAILABLE / REFERENCE_ONLY; completed upon issue. | `services/circulation.ts` (`returnCopy`, `issueCopy`), `services/holds.ts` (`cancelHold`) | `tests/integration/holds.test.ts` (`T-10`, `T-11`) | Implemented |
+| `FR-HO-04` | Holds not collected by expiry date set EXPIRED automatically (dashboard/reservations access); copy released per FR-HO-03. | `services/holds.ts` (`processExpiredHolds`), `app/api/holds/process-expired/` | `tests/integration/holds.test.ts` (`T-11`), `tests/integration/holds-routes.test.ts` | Implemented |
+| `FR-HO-05` | Active hold may be cancelled by reserving patron or staff; promotes next waiting hold or releases copy to shelf. | `services/holds.ts` (`cancelHold`), `app/api/holds/[id]/cancel/`, `app/account/AccountClient.tsx` | `tests/integration/holds.test.ts`, `tests/integration/holds-routes.test.ts` | Implemented |
 
 ### 2.9 Fines and Payments (`FR-FI`) — 5 Requirements
 
 | Requirement ID | Description | Implementation Location | Test Location | Status |
 | :--- | :--- | :--- | :--- | :---: |
-| `FR-FI-01` | Staff looks up patron outstanding fines (type, reason, amount, paid, balance) with total balance. | `app/(staff)/fines/`, `v_outstanding_fines` | `tests/integration/fines.test.ts` | Planned |
-| `FR-FI-02` | Staff with Fine collect records payment of any amount between 0.01 and balance (CASH/UPI/CARD/ONLINE); updates paid amount/status. | `services/fine.ts` (`collectPayment`) | `tests/integration/fines.test.ts` (`T-14`) | Planned |
-| `FR-FI-03` | Payment or waiver receives unique receipt RECEIPT_PREFIX-YYYY-NNNNN; printable receipt with breakdown. | `services/fine.ts`, `app/(staff)/fines/receipt/[id]/` | `tests/integration/fines.test.ts` (`T-14`) | Planned |
-| `FR-FI-04` | Staff with Fine waive waives remaining balance; fine becomes WAIVED; waiver receipt generated. | `services/fine.ts` (`waiveFine`) | `tests/e2e/fines-waiver.spec.ts` (`T-15`) | Planned |
-| `FR-FI-05` | Fines and payments never deleted or edited after creation; database role revokes UPDATE/DELETE on payments. | `db/schema/circulation.ts`, PostgreSQL permissions | `tests/integration/fines.test.ts` | Planned |
+| `FR-FI-01` | Staff looks up patron outstanding fines (type, reason, amount, paid, balance) with total balance. | `app/(staff)/fines/`, `v_outstanding_fines`, `services/fines.ts` (`listFines`), `app/api/fines/route.ts` | `tests/integration/fines.test.ts`, `tests/integration/fines-routes.test.ts` | Implemented |
+| `FR-FI-02` | Staff with Fine collect records payment of any amount between 0.01 and balance (CASH/UPI/CARD/ONLINE); updates paid amount/status. | `services/fines.ts` (`collectPayment`), `app/api/fines/pay/route.ts`, `app/(staff)/fines/FinesClient.tsx` | `tests/integration/fines.test.ts` (`T-14`), `tests/integration/fines-routes.test.ts` | Implemented |
+| `FR-FI-03` | Payment or waiver receives unique receipt RECEIPT_PREFIX-YYYY-NNNNN; printable receipt with breakdown. | `services/fines.ts` (`generateReceiptNumber`, `getReceiptDetails`), `seq_receipt_no`, `app/(staff)/fines/receipt/[receiptNo]/` | `tests/integration/fines.test.ts` (`T-14`), `tests/integration/fines-routes.test.ts`, `tests/e2e/fines.spec.ts` | Implemented |
+| `FR-FI-04` | Staff with Fine waive waives remaining balance; fine becomes WAIVED; waiver receipt generated. | `services/fines.ts` (`waiveFine`), `app/api/fines/waive/route.ts`, `app/(staff)/fines/FinesClient.tsx` | `tests/integration/fines.test.ts` (`T-15`), `tests/integration/fines-routes.test.ts`, `tests/e2e/fines.spec.ts` | Implemented |
+| `FR-FI-05` | Fines and payments never deleted or edited after creation; database role revokes UPDATE/DELETE on payments. | `db/schema/circulation.ts`, immutable append-only ledger | `tests/integration/fines.test.ts` | Implemented |
 
 ### 2.10 No-Dues Clearance (`FR-ND`) — 2 Requirements
 
@@ -285,8 +286,8 @@ As mandated by `CLAUDE.md`, every requirement preserves its exact requirement ID
 | `UC-04` | Mark a book lost | Librarian (`CIRC_LOST`) | `app/(staff)/circulation/lost/`, `services/circulation.ts` | `tests/integration/circulation.test.ts` (`T-13`), `tests/e2e/circulation-desk.spec.ts` | Implemented |
 | `UC-05` | Bulk import students | Librarian (`PATRON_IMPORT`) | `app/(staff)/imports/patrons/`, `services/patron-import.ts` | `tests/integration/import-students.test.ts` (`T-19`) | Planned |
 | `UC-06` | Bulk import books | Librarian (`CATALOG_IMPORT`)| `app/(staff)/imports/books/`, `services/book-import.ts` | `tests/integration/import-books.test.ts` (`T-18`) | Planned |
-| `UC-07` | Reserve a title (OPAC)| Patron (authenticated) | `app/opac/holds/`, `services/holds.ts` | `tests/e2e/opac-holds.spec.ts` (`T-16`, `T-17`) | Planned |
-| `UC-08` | Collect or waive a fine| Librarian (`FINE_COLLECT`/`WAIVE`)| `app/(staff)/fines/`, `services/fine.ts` | `tests/e2e/fines-waiver.spec.ts` (`T-14`, `T-15`) | Planned |
+| `UC-07` | Reserve a title (OPAC)| Patron (authenticated) | `app/opac/OpacClient.tsx`, `services/holds.ts` | `tests/integration/holds.test.ts` (`T-16`, `T-17`), `tests/e2e/reservations.spec.ts` | Implemented |
+| `UC-08` | Collect or waive a fine| Librarian (`FINE_COLLECT`/`WAIVE`)| `app/(staff)/fines/`, `services/fines.ts`, `app/api/fines/` | `tests/integration/fines.test.ts` (`T-14`, `T-15`), `tests/integration/fines-routes.test.ts`, `tests/e2e/fines.spec.ts` | Implemented |
 | `UC-09` | Issue a no-dues certificate| Librarian (`NODUES_ISSUE`)| `app/(staff)/nodues/`, `services/nodues.ts` | `tests/e2e/nodues.spec.ts` (`T-21`) | Planned |
 | `UC-10` | Configure a circulation rule| Admin (`ADMIN_RULES`) | `app/(staff)/admin/rules/`, `services/admin-rules.ts`| `tests/integration/admin.test.ts` (`T-24`) | Planned |
 | `UC-11` | Manage staff accounts | Admin (`ADMIN_USERS`) | `app/(staff)/admin/users/`, `services/user.ts`, `app/api/admin/users/` | `tests/integration/rbac.test.ts`, `tests/integration/rbac-routes.test.ts` | Implemented |
@@ -311,10 +312,10 @@ As mandated by `CLAUDE.md`, every requirement preserves its exact requirement ID
 | `T-11` | Reserved copy issue control | `FR-CI-02`, `FR-HO-03` | Vitest: `tests/integration/circulation.test.ts` | Implemented |
 | `T-12` | Consecutive renewal limit | `FR-CI-04`, `BR-05` | Vitest: `tests/integration/circulation.test.ts`, `tests/unit/rules-engine.test.ts` | Implemented |
 | `T-13` | Mark book lost | `FR-CI-05`, `BR-07` | Vitest: `tests/integration/circulation.test.ts`, `tests/unit/rules-fines.test.ts` | Implemented |
-| `T-14` | Cash fine payment & receipt | `FR-FI-02`, `FR-FI-03` | Vitest: `tests/integration/fines.test.ts` | Planned |
-| `T-15` | Fine waiver authorization | `FR-FI-04`, `FR-AU-02` | Playwright: `tests/e2e/fines-waiver.spec.ts` | Planned |
-| `T-16` | Hold placement refusal on shelf copy | `FR-HO-01`, `FR-OP-03` | Playwright: `tests/e2e/opac-holds.spec.ts` | Planned |
-| `T-17` | Hold placement & cancellation | `FR-HO-01`, `FR-OP-03` | Playwright: `tests/e2e/opac-holds.spec.ts` | Planned |
+| `T-14` | Cash fine payment & receipt | `FR-FI-02`, `FR-FI-03` | Vitest: `tests/integration/fines.test.ts`, `tests/integration/fines-routes.test.ts` | Implemented |
+| `T-15` | Fine waiver authorization | `FR-FI-04`, `FR-AU-02` | Vitest: `tests/integration/fines.test.ts`, `tests/integration/fines-routes.test.ts`, `tests/e2e/fines.spec.ts` | Implemented |
+| `T-16` | Hold placement refusal on shelf copy | `FR-HO-01`, `FR-OP-03` | Vitest: `tests/integration/holds.test.ts`, `tests/integration/holds-routes.test.ts` | Implemented |
+| `T-17` | Hold placement & cancellation | `FR-HO-01`, `FR-HO-05`, `FR-OP-03` | Vitest: `tests/integration/holds.test.ts`, `tests/integration/holds-routes.test.ts` | Implemented |
 | `T-18` | Bulk book import validation & commit | `FR-BI-02` to `05` | Vitest: `tests/integration/import-books.test.ts` | Planned |
 | `T-19` | Bulk student import & deduplication | `FR-PI-03` to `05` | Vitest: `tests/integration/import-students.test.ts` | Planned |
 | `T-20` | Student initial OPAC login | `FR-AU-05`, `FR-OP-03` | Vitest: `tests/integration/auth.test.ts` / `auth-routes.test.ts` | Implemented |

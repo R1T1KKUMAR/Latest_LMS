@@ -82,6 +82,51 @@ export function AccountClient({ patron, loans, holds, fines, csrfToken }: Accoun
   // Renew modal
   const [renewTarget, setRenewTarget] = useState<PatronLoan | null>(null);
   const [cancelHoldTarget, setCancelHoldTarget] = useState<PatronHold | null>(null);
+  const [cancelHoldLoading, setCancelHoldLoading] = useState(false);
+  const [holdAlert, setHoldAlert] = useState<{
+    variant: "info" | "success" | "warning" | "error";
+    message: string;
+  } | null>(null);
+
+  const handleCancelHold = async () => {
+    if (!cancelHoldTarget) return;
+    setCancelHoldLoading(true);
+    setHoldAlert(null);
+    try {
+      const res = await fetch(`/api/holds/${cancelHoldTarget.id}/cancel`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-csrf-token": csrfToken,
+        },
+        body: JSON.stringify({
+          csrfToken,
+          reason: "Cancelled by patron from account portal",
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setHoldAlert({
+          variant: "error",
+          message: data.error || "Failed to cancel reservation",
+        });
+      } else {
+        setHoldAlert({
+          variant: "success",
+          message: `Reservation for "${cancelHoldTarget.title}" was successfully cancelled.`,
+        });
+        router.refresh();
+      }
+    } catch {
+      setHoldAlert({
+        variant: "error",
+        message: "Failed to communicate with server to cancel reservation",
+      });
+    } finally {
+      setCancelHoldLoading(false);
+      setCancelHoldTarget(null);
+    }
+  };
 
   if (!patron) {
     return (
@@ -344,9 +389,13 @@ export function AccountClient({ patron, loans, holds, fines, csrfToken }: Accoun
 
       {/* Tab 2: Reservations */}
       {activeTab === "holds" && (
-        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-xs">
-          <h2 className="text-base font-bold text-slate-900 mb-1">Your Title Reservations</h2>
-          <p className="text-xs text-slate-500 mb-4">Titles in queue or waiting for pickup</p>
+        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-xs space-y-4">
+          <div>
+            <h2 className="text-base font-bold text-slate-900 mb-1">Your Title Reservations</h2>
+            <p className="text-xs text-slate-500">Titles in queue or waiting for pickup</p>
+          </div>
+
+          {holdAlert && <Alert variant={holdAlert.variant}>{holdAlert.message}</Alert>}
 
           {holds.length === 0 ? (
             <EmptyState
@@ -530,9 +579,9 @@ export function AccountClient({ patron, loans, holds, fines, csrfToken }: Accoun
           isDestructive={true}
           title={`Cancel Reservation`}
           message={`Are you sure you want to cancel your reservation for "${cancelHoldTarget.title}"?`}
-          confirmLabel="Cancel Hold"
+          confirmLabel={cancelHoldLoading ? "Cancelling..." : "Cancel Hold"}
           cancelLabel="Keep Reservation"
-          onConfirm={() => setCancelHoldTarget(null)}
+          onConfirm={handleCancelHold}
           onCancel={() => setCancelHoldTarget(null)}
         />
       )}

@@ -1,4 +1,5 @@
 import { hashPassword } from "@/lib/crypto";
+import { addCalendarDays, formatDateIso } from "@/rules/dates";
 import type { AnyDatabase } from "./client";
 import * as schema from "./schema";
 
@@ -869,8 +870,11 @@ export async function seedDatabase(db: AnyDatabase) {
 
   // 16. Training Transactions (Loans & Holds for tests T-05 to T-15)
   // Overdue loan: CL000001 to Rahul Kumar (due 12 days ago, for T-09)
-  const twelveDaysAgo = new Date(Date.now() - 12 * 86400000).toISOString().split("T")[0];
-  const twentySixDaysAgo = new Date(Date.now() - 26 * 86400000).toISOString().split("T")[0];
+  const today = new Date();
+  const twelveDaysAgo = formatDateIso(addCalendarDays(today, -12));
+  const twentySixDaysAgo = formatDateIso(addCalendarDays(today, -26));
+  const todayIso = formatDateIso(today);
+  const fourteenDaysLater = formatDateIso(addCalendarDays(today, 14));
 
   await db.insert(schema.loans).values([
     {
@@ -886,8 +890,8 @@ export async function seedDatabase(db: AnyDatabase) {
       itemId: copyCl7.id,
       patronId: patronPriya.id,
       libraryId: libCl.id,
-      issueDate: new Date().toISOString().split("T")[0],
-      dueDate: new Date(Date.now() + 14 * 86400000).toISOString().split("T")[0],
+      issueDate: todayIso,
+      dueDate: fourteenDaysLater,
       status: "ISSUED",
       issuedBy: userLibrarian.id,
     },
@@ -895,8 +899,8 @@ export async function seedDatabase(db: AnyDatabase) {
       itemId: copyCl8.id,
       patronId: patronSuresh.id,
       libraryId: libCl.id,
-      issueDate: new Date().toISOString().split("T")[0],
-      dueDate: new Date(Date.now() + 14 * 86400000).toISOString().split("T")[0],
+      issueDate: todayIso,
+      dueDate: fourteenDaysLater,
       status: "ISSUED",
       issuedBy: userLibrarian.id,
     },

@@ -1,9 +1,7 @@
-import { desc, eq } from "drizzle-orm";
 import { ForbiddenCard } from "@/components/auth/ForbiddenCard";
 import { PageHeader } from "@/components/layout/PageHeader";
-import { db } from "@/db";
-import * as schema from "@/db/schema";
 import { requirePageAuth } from "@/lib/auth";
+import { listFines } from "@/services/fines";
 import { FinesClient } from "./FinesClient";
 
 export const metadata = {
@@ -14,7 +12,7 @@ export const metadata = {
 export default async function FinesPage() {
   const auth = await requirePageAuth(["FINE_COLLECT", "FINE_WAIVE"]);
 
-  if (!auth.authorized) {
+  if (!auth.authorized || !auth.context) {
     return (
       <div className="container mx-auto px-4 py-8">
         <ForbiddenCard
@@ -29,33 +27,8 @@ export default async function FinesPage() {
   const staffContext = auth.context;
   const permissions = staffContext.permissions;
 
-  // Retrieve fines
-  const rawFines = await db
-    .select({
-      id: schema.fines.id,
-      amount: schema.fines.amount,
-      reason: schema.fines.reason,
-      status: schema.fines.status,
-      createdAt: schema.fines.createdAt,
-      firstName: schema.patrons.firstName,
-      lastName: schema.patrons.lastName,
-      cardNo: schema.patrons.cardNo,
-    })
-    .from(schema.fines)
-    .innerJoin(schema.patrons, eq(schema.fines.patronId, schema.patrons.id))
-    .orderBy(desc(schema.fines.createdAt))
-    .limit(100);
-
-  const fines = rawFines.map((f) => ({
-    id: f.id,
-    amount: f.amount,
-    daysOverdue: 1,
-    reason: f.reason,
-    status: f.status,
-    createdAt: f.createdAt,
-    patronName: [f.firstName, f.lastName].filter(Boolean).join(" "),
-    patronCard: f.cardNo,
-  }));
+  // Retrieve fines with true balances and patron details (FR-FI-01)
+  const result = await listFines({ limit: 100 });
 
   return (
     <div className="space-y-6">
@@ -68,7 +41,8 @@ export default async function FinesPage() {
       />
 
       <FinesClient
-        initialFines={fines}
+        initialFines={result.fines}
+        initialTotalOutstanding={result.totalOutstandingAmount}
         canCollect={permissions.includes("FINE_COLLECT")}
         canWaive={permissions.includes("FINE_WAIVE")}
         csrfToken={staffContext.session.csrfToken}

@@ -2,6 +2,7 @@ import { eq, sql } from "drizzle-orm";
 import { PublicFooter, PublicHeader } from "@/components/layout/PublicHeader";
 import { db } from "@/db";
 import * as schema from "@/db/schema";
+import { getCurrentSession } from "@/lib/auth";
 import { type OpacBook, OpacClient } from "./OpacClient";
 
 export const dynamic = "force-dynamic";
@@ -12,6 +13,10 @@ export const metadata = {
 };
 
 export default async function OpacPage() {
+  const auth = await getCurrentSession("PATRON");
+  const isLoggedInPatron = Boolean(auth && "patron" in auth);
+  const csrfToken = auth?.session?.csrfToken ?? "";
+
   let books: OpacBook[] = [];
 
   try {
@@ -55,7 +60,11 @@ export default async function OpacPage() {
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900">
       <PublicHeader />
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8">
-        <OpacClient initialBooks={books} />
+        <OpacClient
+          initialBooks={books}
+          isLoggedInPatron={isLoggedInPatron}
+          csrfToken={csrfToken}
+        />
       </main>
       <PublicFooter />
     </div>

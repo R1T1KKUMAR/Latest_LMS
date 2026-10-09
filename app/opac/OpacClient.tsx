@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { Alert } from "@/components/ui/Alert";
 import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -31,14 +32,25 @@ export interface OpacBook {
 
 interface OpacClientProps {
   initialBooks: OpacBook[];
+  isLoggedInPatron?: boolean;
+  csrfToken?: string;
 }
 
-export function OpacClient({ initialBooks }: OpacClientProps) {
+export function OpacClient({
+  initialBooks,
+  isLoggedInPatron = false,
+  csrfToken = "",
+}: OpacClientProps) {
   const [query, setQuery] = useState("");
   const [searchField, setSearchField] = useState("all");
   const [onlyAvailable, setOnlyAvailable] = useState(false);
   const [selectedBook, setSelectedBook] = useState<OpacBook | null>(null);
   const [holdTarget, setHoldTarget] = useState<OpacBook | null>(null);
+  const [holdLoading, setHoldLoading] = useState(false);
+  const [holdBanner, setHoldBanner] = useState<{
+    variant: "info" | "success" | "warning" | "error";
+    message: string;
+  } | null>(null);
 
   const filteredBooks = initialBooks.filter((b) => {
     if (onlyAvailable && b.availableCopies <= 0) return false;
@@ -59,8 +71,50 @@ export function OpacClient({ initialBooks }: OpacClientProps) {
     );
   });
 
+  const handleConfirmPlaceHold = async () => {
+    if (!holdTarget) return;
+    setHoldLoading(true);
+    setHoldBanner(null);
+    try {
+      const res = await fetch("/api/holds", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-csrf-token": csrfToken,
+        },
+        body: JSON.stringify({
+          bibId: holdTarget.id,
+          csrfToken,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        setHoldBanner({
+          variant: "error",
+          message: data.error || "Failed to place reservation hold.",
+        });
+      } else {
+        setHoldBanner({
+          variant: "success",
+          message: `Reservation hold placed for "${holdTarget.title}"! Your queue position is #${data.queuePosition}.`,
+        });
+      }
+    } catch {
+      setHoldBanner({
+        variant: "error",
+        message: "Failed to communicate with server to place reservation.",
+      });
+    } finally {
+      setHoldLoading(false);
+      setHoldTarget(null);
+    }
+  };
+
   return (
     <div className="space-y-6">
+      {holdBanner && <Alert variant={holdBanner.variant}>{holdBanner.message}</Alert>}
+
       {/* Search Header Hero */}
       <div className="rounded-2xl bg-gradient-to-r from-blue-900 to-indigo-900 p-8 text-white shadow-lg">
         <div className="max-w-2xl">
@@ -237,7 +291,7 @@ export function OpacClient({ initialBooks }: OpacClientProps) {
       )}
 
       {/* Reserve / Hold Notice Modal */}
-      {holdTarget && (
+      {holdTarget && !isLoggedInPatron && (
         <ConfirmDialog
           isOpen={true}
           title={`Reserve "${holdTarget.title}"`}
@@ -247,6 +301,30 @@ export function OpacClient({ initialBooks }: OpacClientProps) {
           onConfirm={() => {
             window.location.href = "/login";
           }}
+          onCancel={() => setHoldTarget(null)}
+        />
+      )}
+
+      {holdTarget && isLoggedInPatron && holdTarget.availableCopies > 0 && (
+        <ConfirmDialog
+          isOpen={true}
+          title={`Cannot Place Hold on "${holdTarget.title}"`}
+          message={`This title currently has ${holdTarget.availableCopies} available copy(ies) on the shelf. In accordance with library rules (BR-05 / T-16), reservations may only be placed when all copies are checked out or unavailable.`}
+          confirmLabel="Understood"
+          cancelLabel="Close"
+          onConfirm={() => setHoldTarget(null)}
+          onCancel={() => setHoldTarget(null)}
+        />
+      )}
+
+      {holdTarget && isLoggedInPatron && holdTarget.availableCopies === 0 && (
+        <ConfirmDialog
+          isOpen={true}
+          title={`Reserve "${holdTarget.title}"`}
+          message={`Place a reservation hold on "${holdTarget.title}"? You will be added to the reservation queue and assigned the next copy returned to the library.`}
+          confirmLabel={holdLoading ? "Placing Hold..." : "Confirm Reservation"}
+          cancelLabel="Cancel"
+          onConfirm={handleConfirmPlaceHold}
           onCancel={() => setHoldTarget(null)}
         />
       )}

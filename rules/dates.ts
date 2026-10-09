@@ -5,6 +5,10 @@
 
 export function parseDate(d: string | Date): Date {
   if (d instanceof Date) return d;
+  if (typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d)) {
+    const [y, m, day] = d.split("-").map(Number);
+    return new Date(Date.UTC(y, m - 1, day));
+  }
   return new Date(d);
 }
 
@@ -16,8 +20,8 @@ export function calendarDaysBetween(d1: string | Date, d2: string | Date): numbe
   const date1 = parseDate(d1);
   const date2 = parseDate(d2);
 
-  const utc1 = Date.UTC(date1.getFullYear(), date1.getMonth(), date1.getDate());
-  const utc2 = Date.UTC(date2.getFullYear(), date2.getMonth(), date2.getDate());
+  const utc1 = Date.UTC(date1.getUTCFullYear(), date1.getUTCMonth(), date1.getUTCDate());
+  const utc2 = Date.UTC(date2.getUTCFullYear(), date2.getUTCMonth(), date2.getUTCDate());
 
   return Math.floor((utc2 - utc1) / (1000 * 60 * 60 * 24));
 }
@@ -27,7 +31,9 @@ export function calendarDaysBetween(d1: string | Date, d2: string | Date): numbe
  */
 export function addCalendarDays(d: string | Date, days: number): Date {
   const base = parseDate(d);
-  const result = new Date(base.getFullYear(), base.getMonth(), base.getDate() + days);
+  const result = new Date(
+    Date.UTC(base.getUTCFullYear(), base.getUTCMonth(), base.getUTCDate() + days),
+  );
   return result;
 }
 
@@ -36,9 +42,9 @@ export function addCalendarDays(d: string | Date, days: number): Date {
  */
 export function formatDateIso(d: string | Date): string {
   const date = parseDate(d);
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
 }
 

@@ -1,9 +1,7 @@
-import { asc, eq } from "drizzle-orm";
 import { ForbiddenCard } from "@/components/auth/ForbiddenCard";
 import { PageHeader } from "@/components/layout/PageHeader";
-import { db } from "@/db";
-import * as schema from "@/db/schema";
 import { requirePageAuth } from "@/lib/auth";
+import { type HoldListItem, listHolds, processExpiredHolds } from "@/services/holds";
 import { ReservationsClient } from "./ReservationsClient";
 
 export const metadata = {
@@ -14,7 +12,7 @@ export const metadata = {
 export default async function ReservationsPage() {
   const auth = await requirePageAuth("HOLD_MANAGE");
 
-  if (!auth.authorized) {
+  if (!auth.authorized || !auth.context) {
     return (
       <div className="container mx-auto px-4 py-8">
         <ForbiddenCard
@@ -26,32 +24,24 @@ export default async function ReservationsPage() {
     );
   }
 
-  // Retrieve holds
-  const rawHolds = await db
-    .select({
-      id: schema.holds.id,
-      status: schema.holds.status,
-      requestDate: schema.holds.requestDate,
-      expiryDate: schema.holds.expiryDate,
-      firstName: schema.patrons.firstName,
-      lastName: schema.patrons.lastName,
-      cardNo: schema.patrons.cardNo,
-      title: schema.bibRecords.title,
-    })
-    .from(schema.holds)
-    .innerJoin(schema.patrons, eq(schema.holds.patronId, schema.patrons.id))
-    .innerJoin(schema.bibRecords, eq(schema.holds.bibId, schema.bibRecords.id))
-    .orderBy(asc(schema.holds.requestDate))
-    .limit(100);
+  // Automatic expiration housekeeping on page access (FR-HO-04, FR-DB-03)
+  try {
+    await processExpiredHolds();
+  } catch {
+    // Non-fatal if concurrent or read-only edge case
+  }
 
-  const reservations = rawHolds.map((h, index) => ({
+  // Retrieve holds with dynamic queue positions (FR-HO-02)
+  const rawHolds = await listHolds({ limit: 100 });
+
+  const reservations = rawHolds.map((h: HoldListItem) => ({
     id: h.id,
-    queuePosition: index + 1,
+    queuePosition: h.queuePosition ?? 1,
     status: h.status,
     reservationDate: h.requestDate,
-    pickupExpiryDate: h.expiryDate ? String(h.expiryDate) : null,
-    patronName: [h.firstName, h.lastName].filter(Boolean).join(" "),
-    patronCard: h.cardNo,
+    pickupExpiryDate: h.pickupExpiryDate,
+    patronName: h.patronName,
+    patronCard: h.patronCardNo,
     title: h.title,
   }));
 
@@ -65,7 +55,10 @@ export default async function ReservationsPage() {
         breadcrumbs={[{ label: "Circulation" }, { label: "Reservations" }]}
       />
 
-      <ReservationsClient initialReservations={reservations} />
+      <ReservationsClient
+        initialReservations={reservations}
+        csrfToken={auth.context.session.csrfToken}
+      />
     </div>
   );
 }
