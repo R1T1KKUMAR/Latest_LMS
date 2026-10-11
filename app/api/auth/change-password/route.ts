@@ -5,15 +5,15 @@ import { changePatronPassword, changeStaffPassword } from "@/services/auth";
 
 export async function POST(req: NextRequest) {
   try {
-    const authContext = await requireAuthenticatedUser();
-    const submittedCsrf = req.headers.get(CSRF_HEADER_NAME);
+    const authContext = await requireAuthenticatedUser(undefined, { request: req });
+    const body = await req.json().catch(() => ({}));
+    const submittedCsrf = req.headers.get(CSRF_HEADER_NAME) ?? body.csrfToken;
 
     // CSRF Guard (FR-AU-07, NFR-S-04)
     if (!validateCsrfToken(authContext.session.csrfToken, submittedCsrf)) {
       return NextResponse.json({ error: "Invalid or missing CSRF token" }, { status: 403 });
     }
 
-    const body = await req.json();
     const { currentPassword, newPassword } = body;
 
     if (!currentPassword || !newPassword) {

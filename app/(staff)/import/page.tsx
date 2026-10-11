@@ -1,5 +1,8 @@
+import { eq } from "drizzle-orm";
 import { ForbiddenCard } from "@/components/auth/ForbiddenCard";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { db } from "@/db";
+import * as schema from "@/db/schema";
 import { requirePageAuth } from "@/lib/auth";
 import { ImportClient } from "./ImportClient";
 
@@ -26,6 +29,26 @@ export default async function ImportPage() {
   const staffContext = auth.context;
   const permissions = staffContext.permissions;
 
+  // Fetch reference data for dropdown defaults
+  const libraries = await db
+    .select({
+      id: schema.libraries.id,
+      code: schema.libraries.code,
+      name: schema.libraries.name,
+    })
+    .from(schema.libraries)
+    .where(eq(schema.libraries.isActive, true));
+
+  const categories = await db
+    .select({
+      id: schema.patronCategories.id,
+      code: schema.patronCategories.code,
+      name: schema.patronCategories.name,
+      patronType: schema.patronCategories.patronType,
+    })
+    .from(schema.patronCategories)
+    .where(eq(schema.patronCategories.isActive, true));
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -40,6 +63,8 @@ export default async function ImportPage() {
         canImportPatrons={permissions.includes("PATRON_IMPORT")}
         canImportCatalog={permissions.includes("CATALOG_IMPORT")}
         csrfToken={staffContext.session.csrfToken}
+        libraries={libraries}
+        categories={categories}
       />
     </div>
   );

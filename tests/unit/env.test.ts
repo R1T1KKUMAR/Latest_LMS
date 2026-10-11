@@ -13,6 +13,6 @@ describe("Environment Configuration Validation", () => {
   });
 
   it("validates database URL format", () => {
-    expect(env.DATABASE_URL).toContain("postgres");
+    expect(["postgres", "pglite"].some((prefix) => env.DATABASE_URL.includes(prefix))).toBe(true);
   });
 });

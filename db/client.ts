@@ -28,7 +28,9 @@ const localDbDir = path.resolve(process.cwd(), "data/lms-db");
 const shouldUsePglite =
   env.DATABASE_URL.startsWith("pglite") ||
   env.DATABASE_URL.startsWith("file:") ||
-  process.env.USE_PGLITE === "true";
+  process.env.USE_PGLITE === "true" ||
+  fs.existsSync(localDbDir) ||
+  env.DATABASE_URL.includes("localhost:5432");
 
 let clientInstance: any;
 let dbInstance: AnyDatabase;
@@ -48,6 +50,7 @@ if (shouldUsePglite) {
   };
 
   dbInstance = drizzlePglite(pglite, { schema });
+  globalForDb.db = dbInstance;
 } else {
   const conn = globalForDb.conn ?? postgres(env.DATABASE_URL, connectionOptions);
   if (env.NODE_ENV !== "production") {
@@ -56,12 +59,13 @@ if (shouldUsePglite) {
 
   clientInstance = conn;
   dbInstance = drizzlePostgres(conn, { schema });
+  globalForDb.db = dbInstance;
 }
 
 export const isPglite = shouldUsePglite;
 export const client = clientInstance;
 
-export let db: AnyDatabase = globalForDb.db ?? dbInstance;
+export let db: AnyDatabase = dbInstance;
 
 if (env.NODE_ENV !== "production") {
   globalForDb.db = db;

@@ -12,6 +12,7 @@ export async function GET() {
     checks: {
       application: "healthy",
       nodeVersion: process.version,
+      database: await (await import("@/db/client")).checkDatabaseConnection(),
     },
   };
 

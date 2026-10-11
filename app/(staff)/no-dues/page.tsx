@@ -1,6 +1,7 @@
 import { ForbiddenCard } from "@/components/auth/ForbiddenCard";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { requirePageAuth } from "@/lib/auth";
+import { listRecentClearances } from "@/services/nodues";
 import { NoDuesClient } from "./NoDuesClient";
 
 export const metadata = {
@@ -24,6 +25,7 @@ export default async function NoDuesPage() {
   }
 
   const staffContext = auth.context;
+  const recentClearances = await listRecentClearances(20);
 
   return (
     <div className="space-y-6">
@@ -35,7 +37,10 @@ export default async function NoDuesPage() {
         breadcrumbs={[{ label: "Circulation" }, { label: "No-Dues Clearance" }]}
       />
 
-      <NoDuesClient initialClearances={[]} csrfToken={staffContext.session.csrfToken} />
+      <NoDuesClient
+        initialClearances={recentClearances}
+        csrfToken={staffContext.session.csrfToken}
+      />
     </div>
   );
 }

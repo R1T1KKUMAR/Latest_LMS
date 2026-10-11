@@ -225,7 +225,27 @@ export async function requirePermission(
   permissionCode: PermissionCode | string,
   options?: AuthOptions,
 ): Promise<StaffAuthContext> {
-  const context = (await requireAuthenticatedUser("STAFF", options)) as StaffAuthContext;
+  const genericContext = await requireAuthenticatedUser(undefined, options);
+
+  if (genericContext.session.userType !== "STAFF") {
+    const db = options?.db ?? defaultDb;
+    await recordAuditLog(
+      {
+        actorType: "PATRON",
+        actorId: genericContext.session.userId,
+        actorName: "Patron",
+        action: "PERMISSION_DENIED",
+        entity: "permissions",
+        details: `Patron attempted to access staff permission '${permissionCode}'`,
+      },
+      db,
+    );
+    throw new ForbiddenError(
+      `Forbidden: Staff privileges required to access permission (${permissionCode})`,
+    );
+  }
+
+  const context = genericContext as StaffAuthContext;
 
   if (!context.permissions.includes(permissionCode)) {
     const db = options?.db ?? defaultDb;
@@ -265,6 +285,15 @@ export async function requirePageAuth(
       context?: StaffAuthContext;
     }
 > {
+  const genericAuth = await getCurrentSession(undefined, options);
+  if (genericAuth && "patron" in genericAuth) {
+    return {
+      authorized: false,
+      status: 403,
+      message: "Access Denied: Patron accounts cannot access staff administration pages.",
+    };
+  }
+
   const auth = await getCurrentSession("STAFF", options);
 
   if (!auth || !("user" in auth)) {

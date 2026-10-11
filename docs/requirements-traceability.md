@@ -70,12 +70,12 @@ As mandated by `CLAUDE.md`, every requirement preserves its exact requirement ID
 
 | Requirement ID | Description | Implementation Location | Test Location | Status |
 | :--- | :--- | :--- | :--- | :---: |
-| `FR-PI-01` | Staff uploads CSV of students or faculty and chooses default category, institution, course. | `app/(staff)/imports/patrons/` | `tests/e2e/import-patrons.spec.ts` | Planned |
-| `FR-PI-02` | Validates every row before writing; displays preview with per-row status (OK, WARN, ERROR), messages, counts. | `imports/patron-validator.ts` | `tests/unit/import-patrons.test.ts` | Planned |
-| `FR-PI-03` | Errors (row skipped): missing roll/employee id/first name, unknown category, duplicate roll/employee id in DB or file. | `imports/patron-validator.ts` | `tests/integration/import-students.test.ts` (`T-19`) | Planned |
-| `FR-PI-04` | On confirmation, valid rows inserted one transaction each; password defaults to card number (must change). | `services/patron-import.ts` | `tests/integration/import-students.test.ts` (`T-19`) | Planned |
-| `FR-PI-05` | Each import recorded in import_batches (type, filename, totals, user, time); re-import creates no duplicates. | `repositories/import-batch.ts`, `services/patron-import.ts` | `tests/integration/import-students.test.ts` (`T-19`) | Planned |
-| `FR-PI-06` | Templates and sample CSV files downloadable from import page. | `app/(staff)/imports/templates/` | `tests/e2e/import-patrons.spec.ts` | Planned |
+| `FR-PI-01` | Staff uploads CSV of students or faculty and chooses default category, institution, course. | `app/(staff)/import/`, `services/patron-import.ts` | `tests/integration/import-students.test.ts` | Implemented |
+| `FR-PI-02` | Validates every row before writing; displays preview with per-row status (OK, WARN, ERROR), messages, counts. | `services/patron-import.ts` (`validatePatronCsv`) | `tests/integration/import-students.test.ts` | Implemented |
+| `FR-PI-03` | Errors (row skipped): missing roll/employee id/first name, unknown category, duplicate roll/employee id in DB or file. | `services/patron-import.ts` | `tests/integration/import-students.test.ts` (`T-19`) | Implemented |
+| `FR-PI-04` | On confirmation, valid rows inserted one transaction each; password defaults to card number (must change). | `services/patron-import.ts` (`commitPatronImport`) | `tests/integration/import-students.test.ts` (`T-19`) | Implemented |
+| `FR-PI-05` | Each import recorded in import_batches (type, filename, totals, user, time); re-import creates no duplicates. | `db/schema/circulation.ts`, `services/patron-import.ts` | `tests/integration/import-students.test.ts` (`T-19`) | Implemented |
+| `FR-PI-06` | Templates and sample CSV files downloadable from import page. | `app/(staff)/import/ImportClient.tsx` | `tests/integration/import-routes.test.ts` | Implemented |
 
 ### 2.5 Catalogue (`FR-CA`) — 8 Requirements
 
@@ -94,11 +94,11 @@ As mandated by `CLAUDE.md`, every requirement preserves its exact requirement ID
 
 | Requirement ID | Description | Implementation Location | Test Location | Status |
 | :--- | :--- | :--- | :--- | :---: |
-| `FR-BI-01` | Staff uploads CSV where one row is one title plus number of copies, choosing default library. | `app/(staff)/imports/books/` | `tests/e2e/import-books.spec.ts` | Planned |
-| `FR-BI-02` | Validation and preview per FR-PI-02. Errors: missing title, unknown item type/library, duplicate accession in DB/file. | `imports/book-validator.ts` | `tests/integration/import-books.test.ts` (`T-18`) | Planned |
-| `FR-BI-03` | Row whose ISBN (or title + authors) exists adds copies to existing title; preview indicates new title vs added copies. | `imports/book-validator.ts`, `services/book-import.ts` | `tests/integration/import-books.test.ts` (`T-18`) | Planned |
-| `FR-BI-04` | Supplied accession numbers and barcodes accepted as pipe-delimited list; missing ones generated automatically. | `services/book-import.ts` | `tests/integration/import-books.test.ts` (`T-18`) | Planned |
-| `FR-BI-05` | Each row committed in own transaction; result page lists title id, copies added, accession range, link to labels. | `services/book-import.ts` | `tests/integration/import-books.test.ts` (`T-18`) | Planned |
+| `FR-BI-01` | Staff uploads CSV where one row is one title plus number of copies, choosing default library. | `app/(staff)/import/`, `services/book-import.ts` | `tests/integration/import-books.test.ts` (`T-18`) | Implemented |
+| `FR-BI-02` | Validation and preview per FR-PI-02. Errors: missing title, unknown item type/library, duplicate accession in DB/file. | `services/book-import.ts` (`validateBookCsv`) | `tests/integration/import-books.test.ts` (`T-18`) | Implemented |
+| `FR-BI-03` | Row whose ISBN (or title + authors) exists adds copies to existing title; preview indicates new title vs added copies. | `services/book-import.ts` (`ADD_COPIES` vs `NEW_TITLE`) | `tests/integration/import-books.test.ts` (`T-18`) | Implemented |
+| `FR-BI-04` | Supplied accession numbers and barcodes accepted as pipe-delimited list; missing ones generated automatically. | `services/book-import.ts` | `tests/integration/import-books.test.ts` (`T-18`) | Implemented |
+| `FR-BI-05` | Each row committed in own transaction; result page lists title id, copies added, accession range, link to labels. | `services/book-import.ts` (`commitBookImport`) | `tests/integration/import-books.test.ts` (`T-18`) | Implemented |
 
 ### 2.7 Circulation (`FR-CI`) — 7 Requirements
 
@@ -136,8 +136,8 @@ As mandated by `CLAUDE.md`, every requirement preserves its exact requirement ID
 
 | Requirement ID | Description | Implementation Location | Test Location | Status |
 | :--- | :--- | :--- | :--- | :---: |
-| `FR-ND-01` | Staff checks patron and views loans and fines pending with shortcuts to return books and collect fines. | `app/(staff)/nodues/`, `services/nodues.ts` | `tests/e2e/nodues.spec.ts` (`T-21`) | Planned |
-| `FR-ND-02` | When no active loans and no outstanding fines, staff with No-dues issues printable certificate and optionally sets status GRADUATED; audited. | `app/(staff)/nodues/certificate/[id]/`, `services/nodues.ts`| `tests/e2e/nodues.spec.ts` (`T-21`) | Planned |
+| `FR-ND-01` | Staff checks patron and views loans and fines pending with shortcuts to return books and collect fines. | `app/(staff)/no-dues/`, `services/nodues.ts`, `app/api/no-dues/check/` | `tests/integration/nodues.test.ts`, `tests/integration/nodues-routes.test.ts`, `tests/e2e/nodues.spec.ts` (`T-21`) | Implemented |
+| `FR-ND-02` | When no active loans and no outstanding fines, staff with No-dues issues printable certificate and optionally sets status GRADUATED; audited. | `app/(staff)/no-dues/certificate/[id]/`, `services/nodues.ts`, `app/api/no-dues/issue/` | `tests/integration/nodues.test.ts`, `tests/integration/nodues-routes.test.ts`, `tests/e2e/nodues.spec.ts` (`T-21`) | Implemented |
 
 ### 2.11 Reports (`FR-RP`) — 3 Requirements
 
@@ -159,10 +159,10 @@ As mandated by `CLAUDE.md`, every requirement preserves its exact requirement ID
 
 | Requirement ID | Description | Implementation Location | Test Location | Status |
 | :--- | :--- | :--- | :--- | :---: |
-| `FR-OP-01` | Public search on LAN without login; browse new arrivals (NEW_ARRIVAL_DAYS), most borrowed titles, departments; view copy shelf locations. | `app/opac/`, `services/opac.ts` | `tests/e2e/opac-public.spec.ts` | Planned |
-| `FR-OP-02` | Signed-in patron sees card details, validity, current loans with due dates, outstanding fines, hold queue positions, borrowing history. | `app/opac/account/`, `services/opac-account.ts` | `tests/e2e/opac-auth.spec.ts` | Planned |
-| `FR-OP-03` | Signed-in patron places hold (FR-HO-01), cancels own holds, changes password. | `app/opac/holds/`, `services/opac-holds.ts` | `tests/e2e/opac-holds.spec.ts` (`T-16`, `T-17`) | Planned |
-| `FR-OP-04` | OPAC uses separate public layout; never exposes staff functions or other patrons' private data. | `app/opac/layout.tsx` | `tests/e2e/opac-public.spec.ts` | Planned |
+| `FR-OP-01` | Public search on LAN without login; browse new arrivals (NEW_ARRIVAL_DAYS), most borrowed titles, departments; view copy shelf locations. | `app/opac/`, `services/opac.ts`, `app/api/opac/` | `tests/integration/opac.test.ts`, `tests/integration/opac-routes.test.ts`, `tests/e2e/opac-public.spec.ts` | Implemented |
+| `FR-OP-02` | Signed-in patron sees card details, validity, current loans with due dates, outstanding fines, hold queue positions, borrowing history. | `app/account/`, `services/opac.ts` (`getPatronAccountData`), `app/api/account/` | `tests/integration/opac.test.ts`, `tests/integration/opac-routes.test.ts`, `tests/e2e/opac-auth.spec.ts` | Implemented |
+| `FR-OP-03` | Signed-in patron places hold (FR-HO-01), cancels own holds, changes password. | `app/account/`, `app/opac/title/[id]/`, `services/holds.ts`, `services/opac.ts` | `tests/integration/opac.test.ts` (`T-20`), `tests/integration/opac-routes.test.ts` (`T-16`, `T-17`), `tests/e2e/opac-holds.spec.ts` | Implemented |
+| `FR-OP-04` | OPAC uses separate public layout; never exposes staff functions or other patrons' private data. | `app/opac/layout.tsx`, `lib/auth.ts` (`requirePermission` 403 guard) | `tests/integration/opac-routes.test.ts`, `tests/e2e/opac-public.spec.ts` | Implemented |
 
 ### 2.14 Printing and Barcodes (`FR-PR`) — 2 Requirements
 
@@ -246,7 +246,7 @@ As mandated by `CLAUDE.md`, every requirement preserves its exact requirement ID
 | `NFR-U-03` | Plain-language error messages (pagination split noted). | Global error handler, flash notification strip | `tests/e2e/ui-ux.spec.ts` | Planned |
 | `NFR-U-04` | Consistent navigation: sidebar, page title, message strip; form values preserved on failure. | `app/layout.tsx`, `app/error.tsx` | `tests/integration/health.test.ts` | Implemented |
 | `NFR-U-05` | Printouts usable on plain A4, label sheets, and card stock without custom drivers. | `app/globals.css` print media rules | `tests/e2e/printing.spec.ts` | Implemented |
-| `NFR-U-06` | OPAC needs no instruction for students to search, view availability, and reserve. | Intuitive search bar and clear status badges | `tests/e2e/opac-public.spec.ts` | Planned |
+| `NFR-U-06` | OPAC needs no instruction for students to search, view availability, and reserve. | Intuitive search bar and clear status badges | `tests/integration/opac.test.ts`, `tests/e2e/opac-public.spec.ts` | Implemented |
 
 ### 4.5 Maintainability (`NFR-M`) — 5 Requirements
 
@@ -284,11 +284,11 @@ As mandated by `CLAUDE.md`, every requirement preserves its exact requirement ID
 | `UC-02` | Return a book | Librarian (`CIRC_RETURN`) | `app/(staff)/circulation/return/`, `services/circulation.ts` | `tests/integration/circulation.test.ts` (`T-09`, `T-10`), `tests/e2e/circulation-desk.spec.ts` | Implemented |
 | `UC-03` | Renew a book | Librarian (`CIRC_RENEW`) | `app/(staff)/circulation/renew/`, `services/circulation.ts` | `tests/integration/circulation.test.ts` (`T-12`), `tests/e2e/circulation-desk.spec.ts` | Implemented |
 | `UC-04` | Mark a book lost | Librarian (`CIRC_LOST`) | `app/(staff)/circulation/lost/`, `services/circulation.ts` | `tests/integration/circulation.test.ts` (`T-13`), `tests/e2e/circulation-desk.spec.ts` | Implemented |
-| `UC-05` | Bulk import students | Librarian (`PATRON_IMPORT`) | `app/(staff)/imports/patrons/`, `services/patron-import.ts` | `tests/integration/import-students.test.ts` (`T-19`) | Planned |
-| `UC-06` | Bulk import books | Librarian (`CATALOG_IMPORT`)| `app/(staff)/imports/books/`, `services/book-import.ts` | `tests/integration/import-books.test.ts` (`T-18`) | Planned |
+| `UC-05` | Bulk import students | Librarian (`PATRON_IMPORT`) | `app/(staff)/import/`, `services/patron-import.ts` | `tests/integration/import-students.test.ts` (`T-19`) | Implemented |
+| `UC-06` | Bulk import books | Librarian (`CATALOG_IMPORT`)| `app/(staff)/import/`, `services/book-import.ts` | `tests/integration/import-books.test.ts` (`T-18`) | Implemented |
 | `UC-07` | Reserve a title (OPAC)| Patron (authenticated) | `app/opac/OpacClient.tsx`, `services/holds.ts` | `tests/integration/holds.test.ts` (`T-16`, `T-17`), `tests/e2e/reservations.spec.ts` | Implemented |
 | `UC-08` | Collect or waive a fine| Librarian (`FINE_COLLECT`/`WAIVE`)| `app/(staff)/fines/`, `services/fines.ts`, `app/api/fines/` | `tests/integration/fines.test.ts` (`T-14`, `T-15`), `tests/integration/fines-routes.test.ts`, `tests/e2e/fines.spec.ts` | Implemented |
-| `UC-09` | Issue a no-dues certificate| Librarian (`NODUES_ISSUE`)| `app/(staff)/nodues/`, `services/nodues.ts` | `tests/e2e/nodues.spec.ts` (`T-21`) | Planned |
+| `UC-09` | Issue a no-dues certificate| Librarian (`NODUES_ISSUE`)| `app/(staff)/no-dues/`, `services/nodues.ts`, `app/api/no-dues/` | `tests/integration/nodues.test.ts`, `tests/integration/nodues-routes.test.ts`, `tests/e2e/nodues.spec.ts` (`T-21`) | Implemented |
 | `UC-10` | Configure a circulation rule| Admin (`ADMIN_RULES`) | `app/(staff)/admin/rules/`, `services/admin-rules.ts`| `tests/integration/admin.test.ts` (`T-24`) | Planned |
 | `UC-11` | Manage staff accounts | Admin (`ADMIN_USERS`) | `app/(staff)/admin/users/`, `services/user.ts`, `app/api/admin/users/` | `tests/integration/rbac.test.ts`, `tests/integration/rbac-routes.test.ts` | Implemented |
 | `UC-12` | First start of the system | System / Developer | `scripts/startup.ts`, `db/migrations/` | `tests/integration/startup.test.ts` (`T-01`) | Planned |
@@ -316,10 +316,10 @@ As mandated by `CLAUDE.md`, every requirement preserves its exact requirement ID
 | `T-15` | Fine waiver authorization | `FR-FI-04`, `FR-AU-02` | Vitest: `tests/integration/fines.test.ts`, `tests/integration/fines-routes.test.ts`, `tests/e2e/fines.spec.ts` | Implemented |
 | `T-16` | Hold placement refusal on shelf copy | `FR-HO-01`, `FR-OP-03` | Vitest: `tests/integration/holds.test.ts`, `tests/integration/holds-routes.test.ts` | Implemented |
 | `T-17` | Hold placement & cancellation | `FR-HO-01`, `FR-HO-05`, `FR-OP-03` | Vitest: `tests/integration/holds.test.ts`, `tests/integration/holds-routes.test.ts` | Implemented |
-| `T-18` | Bulk book import validation & commit | `FR-BI-02` to `05` | Vitest: `tests/integration/import-books.test.ts` | Planned |
-| `T-19` | Bulk student import & deduplication | `FR-PI-03` to `05` | Vitest: `tests/integration/import-students.test.ts` | Planned |
+| `T-18` | Bulk book import validation & commit | `FR-BI-02` to `05` | Vitest: `tests/integration/import-books.test.ts` | Implemented |
+| `T-19` | Bulk student import & deduplication | `FR-PI-03` to `05` | Vitest: `tests/integration/import-students.test.ts` | Implemented |
 | `T-20` | Student initial OPAC login | `FR-AU-05`, `FR-OP-03` | Vitest: `tests/integration/auth.test.ts` / `auth-routes.test.ts` | Implemented |
-| `T-21` | No-dues clearance verification | `FR-ND-01`, `FR-ND-02` | Playwright: `tests/e2e/nodues.spec.ts` | Planned |
+| `T-21` | No-dues clearance verification | `FR-ND-01`, `FR-ND-02` | Vitest: `tests/integration/nodues.test.ts`, Playwright: `tests/e2e/nodues.spec.ts` | Implemented |
 | `T-22` | All 13 reports verification | `FR-RP-01` to `03` | Vitest: `tests/integration/reports.test.ts` | Planned |
 | `T-23` | System setting dynamic update | `FR-AD-02` | Playwright: `tests/e2e/settings.spec.ts` | Planned |
 | `T-24` | Dynamic circulation rule addition | `FR-AD-01`, `BR-02` | Vitest: `tests/integration/circulation.test.ts` | Planned |
@@ -338,7 +338,7 @@ As mandated by `CLAUDE.md`, every requirement preserves its exact requirement ID
 | `DR-02` | Foreign key referential integrity; referenced master rows cannot be deleted (is_active flag used). | `db/schema/` (`ON DELETE RESTRICT`) | `tests/integration/db-schema.test.ts` | Implemented |
 | `DR-03` | Status columns accept only defined enum values via CHECK constraints. | `db/schema/` (`CHECK` constraints) | `tests/integration/db-schema.test.ts` | Implemented |
 | `DR-04` | Money as NUMERIC(10,2); dates as DATE; timestamps as TIMESTAMPTZ with created_at/updated_at. | `db/schema/` | `tests/integration/db-schema.test.ts` | Implemented |
-| `DR-05` | Text limits: title/subtitle/authors/keywords 500, publisher 200, names 60, address 500, summary 4000; importers truncate. | `imports/truncate.ts` | `tests/unit/truncate.test.ts` | Planned |
+| `DR-05` | Text limits: title/subtitle/authors/keywords 500, publisher 200, names 60, address 500, summary 4000; importers truncate. | `imports/truncate.ts` | `tests/unit/truncate.test.ts` | Implemented |
 | `DR-06` | Operational data retained indefinitely; nothing is ever physically deleted. | Repositories & database grants | `tests/integration/audit.test.ts` | Planned |
 | `DR-07` | 5-year design volumes: 60k copies, 25k titles, 15k patrons, 300k loans, 1M audit logs supported via lookup indexes. | `db/schema/` indexes | `tests/integration/db-schema.test.ts` | Implemented |
 | `DR-08` | First start installs 5 institutions, 5 libraries, 12 depts, 11 courses, 15 categories, 7 item types, 2 vendors, 4 roles, 21 permissions, 3 staff, 20 rules, 17 settings, training set. | `db/seed.ts` | `tests/integration/db-schema.test.ts` | Implemented |
