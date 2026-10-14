@@ -54,3 +54,22 @@ export function formatDateIso(d: string | Date): string {
 export function isBeforeDay(target: string | Date, reference: string | Date = new Date()): boolean {
   return calendarDaysBetween(reference, target) < 0;
 }
+
+/**
+ * Returns an array of ISO 'YYYY-MM-DD' strings for each day in the half-open interval (d1, d2].
+ * If d2 <= d1, returns empty array.
+ */
+export function getCalendarDaysSequence(d1: string | Date, d2: string | Date): string[] {
+  const daysDiff = calendarDaysBetween(d1, d2);
+  if (daysDiff <= 0) return [];
+
+  const result: string[] = [];
+  const base = parseDate(d1);
+  for (let i = 1; i <= daysDiff; i++) {
+    const nextDay = new Date(
+      Date.UTC(base.getUTCFullYear(), base.getUTCMonth(), base.getUTCDate() + i),
+    );
+    result.push(formatDateIso(nextDay));
+  }
+  return result;
+}

@@ -151,8 +151,8 @@ As mandated by `CLAUDE.md`, every requirement preserves its exact requirement ID
 
 | Requirement ID | Description | Implementation Location | Test Location | Status |
 | :--- | :--- | :--- | :--- | :---: |
-| `FR-AD-01` | Staff with Admin rules lists, adds, edits, deletes circulation rules (library, category, item type, limits). | `app/(staff)/admin/rules/`, `services/admin-rules.ts`| `tests/integration/admin.test.ts` (`T-24`) | Planned |
-| `FR-AD-02` | Staff with Admin settings edits system settings of appendix 10.2; changes take effect immediately without restart. | `app/(staff)/admin/settings/`, `services/settings.ts` | `tests/e2e/settings.spec.ts` (`T-23`) | Planned |
+| `FR-AD-01` | Staff with Admin rules lists, adds, edits, deletes circulation rules (library, category, item type, limits, fine rates). | `app/(staff)/admin/rules/`, `services/admin-rules.ts`, `app/api/admin/rules/`, `app/(staff)/admin/fines/` | `tests/integration/admin.test.ts` (`T-24`), `tests/integration/holidays-and-fine-adjustment.test.ts` | Implemented |
+| `FR-AD-02` | Staff with Admin settings edits system settings (grace days, fines, holiday calendar); changes take effect immediately without restart. | `app/(staff)/admin/settings/`, `services/settings.ts`, `services/holidays.ts`, `app/api/admin/fines/`, `app/api/admin/holidays/` | `tests/integration/holidays-and-fine-adjustment.test.ts`, `tests/integration/holidays-routes.test.ts`, `tests/e2e/settings.spec.ts` (`T-23`) | Implemented |
 | `FR-AD-04` | Staff with Audit view browses last 300 audit entries filtered by action and actor. *(Note: FR-AD-03 omitted in SRS)* | `app/(staff)/admin/audit/`, `repositories/audit.ts` | `tests/e2e/audit.spec.ts` (`T-26`) | Planned |
 
 ### 2.13 OPAC Public Catalogue (`FR-OP`) — 4 Requirements
@@ -197,7 +197,7 @@ As mandated by `CLAUDE.md`, every requirement preserves its exact requirement ID
 | `BR-03` | Max books = 0 or loan days = 0 means item is not issued to this category/item type. | `rules/engine.ts` (`checkZeroLimits`) | `tests/unit/rules-engine.test.ts` | Implemented |
 | `BR-04` | Reference item types never issued unless selected rule explicitly names that item type, regardless of score. | `rules/engine.ts` (`checkReferenceIssuable`) | `tests/unit/rules-engine.test.ts` (`T-06`, `T-07`) | Implemented |
 | `BR-05` | Due date = issue date + loan days; renewal due date = today + loan days; renewals capped at max renewals. | `rules/engine.ts` (`calculateDueDate`, `checkRenewalEligibility`) | `tests/unit/rules-engine.test.ts` (`T-05`, `T-12`) | Implemented |
-| `BR-06` | Overdue fine = max(0, days late - grace days) * fine per day, capped at max fine; computed at return/lost, never accrued daily. | `rules/fines.ts` (`calculateOverdueFine`) | `tests/unit/rules-fines.test.ts` (`T-09`) | Implemented |
+| `BR-06` | Overdue fine = max(0, days late - grace days) * fine per day, capped at max fine; computed at return/lost, never accrued daily. Holiday calendar days are exempted from overdue charges. | `rules/fines.ts` (`calculateOverdueFine`), `services/holidays.ts` | `tests/unit/rules-fines.test.ts` (`T-09`), `tests/integration/holidays-and-fine-adjustment.test.ts` | Implemented |
 | `BR-07` | Lost charge = copy price (title price fallback) + LOST_PROCESSING_FEE + overdue fine to date. | `rules/fines.ts` (`calculateLostCharge`) | `tests/unit/rules-fines.test.ts` (`T-13`) | Implemented |
 | `BR-08` | Issue blocked on overdue loans (BLOCK_ISSUE_IF_OVERDUE) or fines >= FINE_BLOCK_LIMIT; renewal blocked on fines, overdues, holds. | `rules/eligibility.ts` (`evaluateIssueEligibility`), `rules/engine.ts` | `tests/unit/rules-eligibility.test.ts` (`T-08`), `tests/unit/rules-engine.test.ts` | Implemented |
 | `BR-09` | Max books quota counts active loans across all titles and libraries in group. | `rules/eligibility.ts` (`checkLoanQuota`, `evaluateIssueEligibility`) | `tests/unit/rules-eligibility.test.ts` | Implemented |

@@ -7,6 +7,23 @@ import { db } from "@/db";
 import * as schema from "@/db/schema";
 import { requirePageAuth } from "@/lib/auth";
 
+const libraryNameCache = new Map<number, string>();
+
+async function getCachedLibraryName(libraryId: number): Promise<string> {
+  const cached = libraryNameCache.get(libraryId);
+  if (cached) return cached;
+
+  const libRows = await db
+    .select({ name: schema.libraries.name })
+    .from(schema.libraries)
+    .where(eq(schema.libraries.id, libraryId))
+    .limit(1);
+
+  const name = libRows[0]?.name ?? "RBMI Central Library";
+  libraryNameCache.set(libraryId, name);
+  return name;
+}
+
 export default async function StaffLayout({ children }: { children: React.ReactNode }) {
   const auth = await requirePageAuth();
 
@@ -23,14 +40,8 @@ export default async function StaffLayout({ children }: { children: React.ReactN
 
   const staffContext = auth.context;
 
-  // Resolve Home Library Name
-  const libRows = await db
-    .select({ name: schema.libraries.name })
-    .from(schema.libraries)
-    .where(eq(schema.libraries.id, staffContext.user.libraryId))
-    .limit(1);
-
-  const libraryName = libRows[0]?.name ?? "RBMI Central Library";
+  // Resolve Home Library Name (from RAM cache)
+  const libraryName = await getCachedLibraryName(staffContext.user.libraryId);
 
   return (
     <div className="min-h-screen flex bg-slate-50 text-slate-900">

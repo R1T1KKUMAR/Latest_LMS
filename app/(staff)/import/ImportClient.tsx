@@ -177,7 +177,7 @@ export function ImportClient({
       columns:
         "roll_no, first_name, last_name, card_no, gender, dob, institute, course, department, year, semester, mobile, email",
       sample:
-        "230101, Rohan, Sharma, 230101, M, 15-08-2004, RBMI-ENG, BTECH-CS, CSE, 2, 4, 9876543210, rohan@example.com",
+        "230101, Rohan, Sharma, 230101, M, 15-08-2004, RBCeT, B.Tech, CSE, 2, 4, 9876543210, rohan@example.com",
     },
     faculty: {
       name: "Faculty & Staff",
@@ -494,6 +494,8 @@ export function ImportClient({
                         <th className="py-2.5 px-4">ID / Roll</th>
                         <th className="py-2.5 px-4">Card No</th>
                         <th className="py-2.5 px-4">Name</th>
+                        <th className="py-2.5 px-4">Course</th>
+                        <th className="py-2.5 px-4">College</th>
                         <th className="py-2.5 px-4">Category</th>
                       </>
                     )}
@@ -569,6 +571,19 @@ export function ImportClient({
                             {row.data?.firstName
                               ? `${row.data.firstName} ${row.data.lastName || ""}`
                               : row.raw.first_name || row.raw.name || "—"}
+                          </td>
+                          <td className="py-2 px-4 text-slate-700">
+                            {row.data?.courseCode ||
+                              row.data?.courseName ||
+                              row.raw.course ||
+                              "—"}
+                          </td>
+                          <td className="py-2 px-4 text-slate-700">
+                            {row.data?.institutionCode ||
+                              row.data?.institutionName ||
+                              row.raw.institute ||
+                              row.raw.college ||
+                              "—"}
                           </td>
                           <td className="py-2 px-4 text-slate-600">
                             {row.data?.categoryCode || row.raw.category || "—"}

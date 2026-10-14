@@ -23,6 +23,7 @@ import {
   selectRule,
 } from "@/rules";
 import { recordAuditLog } from "./audit";
+import { getHolidayDateSet } from "./holidays";
 
 // biome-ignore lint/suspicious/noExplicitAny: Generic database instance support for testing
 type DbInstance = any;
@@ -95,10 +96,16 @@ export async function lookupPatronForCirculation(
       patronType: schema.patrons.patronType,
       categoryId: schema.patrons.categoryId,
       categoryName: schema.patronCategories.name,
+      institutionId: schema.patrons.institutionId,
+      institutionCode: schema.institutions.code,
+      institutionName: schema.institutions.name,
       departmentId: schema.patrons.departmentId,
       departmentName: schema.departments.name,
       courseId: schema.patrons.courseId,
+      courseCode: schema.courses.code,
       courseName: schema.courses.name,
+      academicYear: schema.patrons.academicYear,
+      semester: schema.patrons.semester,
       cardExpiry: schema.patrons.cardExpiry,
       status: schema.patrons.status,
       mobile: schema.patrons.mobile,
@@ -106,6 +113,7 @@ export async function lookupPatronForCirculation(
     })
     .from(schema.patrons)
     .innerJoin(schema.patronCategories, eq(schema.patrons.categoryId, schema.patronCategories.id))
+    .leftJoin(schema.institutions, eq(schema.patrons.institutionId, schema.institutions.id))
     .leftJoin(schema.departments, eq(schema.patrons.departmentId, schema.departments.id))
     .leftJoin(schema.courses, eq(schema.patrons.courseId, schema.courses.id))
     .where(
@@ -141,16 +149,31 @@ export async function lookupPatronForCirculation(
     .orderBy(schema.loans.dueDate);
 
   const today = new Date(referenceDate);
+  const holidayDates = await getHolidayDateSet(db);
 
   const enrichedLoans = activeLoans.map((l: any) => {
     const daysDiff = calendarDaysBetween(today, l.dueDate);
     const isOverdue = daysDiff < 0;
-    const daysOverdue = isOverdue ? Math.abs(daysDiff) : 0;
+    let daysOverdue = isOverdue ? Math.abs(daysDiff) : 0;
+    let holidayExemptDays = 0;
+
+    if (isOverdue && holidayDates.size > 0) {
+      const fineCalc = calculateOverdueFine({
+        dueDate: l.dueDate,
+        returnDate: today,
+        finePerDay: 0,
+        holidays: holidayDates,
+      });
+      holidayExemptDays = fineCalc.holidayExemptDays ?? 0;
+      daysOverdue = Math.max(0, daysOverdue - holidayExemptDays);
+    }
+
     return {
       ...l,
       daysRemaining: daysDiff,
       isOverdue,
       daysOverdue,
+      holidayExemptDays,
     };
   });
 
@@ -653,16 +676,24 @@ export async function returnCopy(
       settings,
     );
 
+    const holidayDates = await getHolidayDateSet(tx, copy.libraryId);
+
     const fineResult = calculateOverdueFine({
       dueDate: activeLoan.dueDate,
       returnDate: today,
       finePerDay: rule.finePerDay,
       graceDays: rule.graceDays,
       maxFine: rule.maxFine,
+      holidays: holidayDates,
     });
 
     let fineRecord = null;
     if (fineResult.finalOverdueFine > 0) {
+      const exemptNote =
+        fineResult.holidayExemptDays && fineResult.holidayExemptDays > 0
+          ? `, ${fineResult.holidayExemptDays} holiday days exempted`
+          : "";
+
       const [createdFine] = await tx
         .insert(schema.fines)
         .values({
@@ -671,7 +702,7 @@ export async function returnCopy(
           amount: sql`${fineResult.finalOverdueFine.toFixed(2)}::numeric`,
           paidAmount: "0.00",
           fineType: "OVERDUE",
-          reason: `Overdue return of ${copy.accessionNo} (${fineResult.daysLate} days late, ${fineResult.chargeableDays} chargeable days)`,
+          reason: `Overdue return of ${copy.accessionNo} (${fineResult.daysLate} days late${exemptNote}, ${fineResult.chargeableDays} chargeable days)`,
           status: "OUTSTANDING",
           createdBy: actor.id,
         })
@@ -1037,13 +1068,15 @@ export async function markCopyLost(
       settings,
     );
 
-    // 4. Calculate overdue fine to date
+    // 4. Calculate overdue fine to date (exempting college holidays)
+    const holidayDates = await getHolidayDateSet(tx, copy.libraryId);
     const overdueFineRes = calculateOverdueFine({
       dueDate: activeLoan.dueDate,
       returnDate: today,
       finePerDay: rule.finePerDay,
       graceDays: rule.graceDays,
       maxFine: rule.maxFine,
+      holidays: holidayDates,
     });
 
     // 5. Calculate lost book replacement charge (BR-07, T-13)

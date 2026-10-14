@@ -42,6 +42,15 @@ export async function createSession(
   return session;
 }
 
+// In-memory cache to eliminate repeated 300ms cloud round-trips on every click
+interface CachedSession {
+  session: SessionRecord;
+  cachedAt: number;
+}
+const sessionCache = new Map<string, CachedSession>();
+const CACHE_TTL_MS = 60 * 1000; // 60 seconds memory cache
+const SLIDING_WINDOW_THROTTLE_MS = 5 * 60 * 1000; // Only write DB update if >5 min elapsed
+
 /**
  * Validates and retrieves an active session. If expired, automatically deletes
  * it from the database and returns null.
@@ -53,6 +62,18 @@ export async function getSession(
 ): Promise<SessionRecord | null> {
   if (!sessionId) return null;
 
+  const nowMs = Date.now();
+  const cached = sessionCache.get(sessionId);
+
+  // Return from RAM if cached within 60s and not expired
+  if (cached && nowMs - cached.cachedAt < CACHE_TTL_MS) {
+    if (new Date(cached.session.expiresAt).getTime() > nowMs) {
+      return cached.session;
+    }
+    sessionCache.delete(sessionId);
+    return null;
+  }
+
   const results = await db
     .select()
     .from(schema.sessions)
@@ -61,33 +82,47 @@ export async function getSession(
 
   const session = results[0];
   if (!session) {
+    sessionCache.delete(sessionId);
     return null;
   }
 
-  const now = new Date();
+  const now = new Date(nowMs);
 
   // Check expiration
-  if (now.getTime() > new Date(session.expiresAt).getTime()) {
-    // Invalidate expired session
+  if (nowMs > new Date(session.expiresAt).getTime()) {
     await db.delete(schema.sessions).where(eq(schema.sessions.id, sessionId));
+    sessionCache.delete(sessionId);
     return null;
   }
 
-  // Sliding window extension
-  const newExpiresAt = new Date(now.getTime() + SESSION_TTL_MS);
-  await db
-    .update(schema.sessions)
-    .set({
+  // Sliding window extension: ONLY update remote DB if >5 minutes elapsed since lastActiveAt
+  const lastActiveTime = new Date(session.lastActiveAt).getTime();
+  const shouldUpdateDb = nowMs - lastActiveTime > SLIDING_WINDOW_THROTTLE_MS;
+
+  let activeSession = session;
+  if (shouldUpdateDb) {
+    const newExpiresAt = new Date(nowMs + SESSION_TTL_MS);
+    await db
+      .update(schema.sessions)
+      .set({
+        lastActiveAt: now,
+        expiresAt: newExpiresAt,
+      })
+      .where(eq(schema.sessions.id, sessionId));
+
+    activeSession = {
+      ...session,
       lastActiveAt: now,
       expiresAt: newExpiresAt,
-    })
-    .where(eq(schema.sessions.id, sessionId));
+    };
+  }
 
-  return {
-    ...session,
-    lastActiveAt: now,
-    expiresAt: newExpiresAt,
-  };
+  sessionCache.set(sessionId, {
+    session: activeSession,
+    cachedAt: nowMs,
+  });
+
+  return activeSession;
 }
 
 /**
@@ -98,6 +133,7 @@ export async function invalidateSession(
   db: DbInstance = defaultDb,
 ): Promise<void> {
   if (!sessionId) return;
+  sessionCache.delete(sessionId);
   await db.delete(schema.sessions).where(eq(schema.sessions.id, sessionId));
 }
 

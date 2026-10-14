@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import { cookies } from "next/headers";
+import { cache } from "react";
 import { db as defaultDb } from "@/db";
 import * as schema from "@/db/schema";
 import { recordAuditLog } from "@/services/audit";
@@ -100,19 +101,21 @@ async function resolveSessionId(
 /**
  * Retrieves and validates the current active session.
  * Enforces boundary separation between STAFF and PATRON sessions (NFR-S-05).
+ * Cached per request using React.cache to avoid redundant queries across Layout and Page.
  */
-export async function getCurrentSession(
-  userType?: "STAFF" | "PATRON",
-  options?: AuthOptions,
-): Promise<StaffAuthContext | PatronAuthContext | null> {
-  const db = options?.db ?? defaultDb;
-  const sessionId = await resolveSessionId(userType, options);
+export const getCurrentSession = cache(
+  async (
+    userType?: "STAFF" | "PATRON",
+    options?: AuthOptions,
+  ): Promise<StaffAuthContext | PatronAuthContext | null> => {
+    const db = options?.db ?? defaultDb;
+    const sessionId = await resolveSessionId(userType, options);
 
-  if (!sessionId) {
-    return null;
-  }
+    if (!sessionId) {
+      return null;
+    }
 
-  const session = await getSession(sessionId, db);
+    const session = await getSession(sessionId, db);
   if (!session) {
     return null;
   }
@@ -122,7 +125,37 @@ export async function getCurrentSession(
     return null;
   }
 
+// In-memory profile cache to eliminate 3x cloud database queries on every navigation
+interface CachedStaffProfile {
+  user: {
+    id: number;
+    username: string;
+    fullName: string;
+    roleId: number;
+    roleCode: string;
+    roleName: string;
+    libraryId: number;
+  };
+  role: typeof schema.roles.$inferSelect;
+  permissions: string[];
+  cachedAt: number;
+}
+const staffProfileCache = new Map<number, CachedStaffProfile>();
+const patronProfileCache = new Map<number, { patron: typeof schema.patrons.$inferSelect; cachedAt: number }>();
+const PROFILE_CACHE_TTL_MS = 60 * 1000; // 60 seconds
+
   if (session.userType === "STAFF") {
+    const nowMs = Date.now();
+    const cached = staffProfileCache.get(session.userId);
+    if (cached && nowMs - cached.cachedAt < PROFILE_CACHE_TTL_MS) {
+      return {
+        session,
+        user: cached.user,
+        role: cached.role,
+        permissions: cached.permissions,
+      };
+    }
+
     const userRows = await db
       .select()
       .from(schema.users)
@@ -131,6 +164,7 @@ export async function getCurrentSession(
 
     const user = userRows[0];
     if (!user || !user.isActive) {
+      staffProfileCache.delete(session.userId);
       // Invalidate orphaned or deactivated session
       await invalidateSession(sessionId, db);
       return null;
@@ -152,17 +186,26 @@ export async function getCurrentSession(
 
     const permissions = permRows.map((r: { code: string }) => r.code);
 
+    const staffUser = {
+      id: user.id,
+      username: user.username,
+      fullName: user.fullName,
+      roleId: user.roleId,
+      roleCode: role?.code ?? "",
+      roleName: role?.name ?? "",
+      libraryId: user.libraryId,
+    };
+
+    staffProfileCache.set(session.userId, {
+      user: staffUser,
+      role,
+      permissions,
+      cachedAt: nowMs,
+    });
+
     return {
       session,
-      user: {
-        id: user.id,
-        username: user.username,
-        fullName: user.fullName,
-        roleId: user.roleId,
-        roleCode: role?.code ?? "",
-        roleName: role?.name ?? "",
-        libraryId: user.libraryId,
-      },
+      user: staffUser,
       role,
       permissions,
     };
@@ -187,8 +230,9 @@ export async function getCurrentSession(
     };
   }
 
-  return null;
-}
+    return null;
+  },
+);
 
 /**
  * Requires that a request is authenticated. Throws AuthenticationError (401)
@@ -294,7 +338,7 @@ export async function requirePageAuth(
     };
   }
 
-  const auth = await getCurrentSession("STAFF", options);
+  const auth = genericAuth;
 
   if (!auth || !("user" in auth)) {
     return {

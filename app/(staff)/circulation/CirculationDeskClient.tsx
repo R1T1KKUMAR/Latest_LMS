@@ -38,7 +38,14 @@ export interface PatronProfile {
   categoryId: number;
   categoryName: string;
   departmentName: string | null;
+  courseId?: number | null;
+  courseCode?: string | null;
   courseName: string | null;
+  institutionId?: number | null;
+  institutionCode?: string | null;
+  institutionName?: string | null;
+  academicYear?: number | null;
+  semester?: number | null;
   cardExpiry: string | Date;
   status: string;
   mobile: string | null;
@@ -655,6 +662,31 @@ export function CirculationDeskClient({
                         {patronData.employeeId ? ` | Emp ID: ${patronData.employeeId}` : ""} |{" "}
                         {patronData.categoryName} ({patronData.patronType})
                       </p>
+                      {(patronData.institutionName || patronData.courseName) && (
+                        <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-slate-600">
+                          {patronData.institutionCode && (
+                            <span className="font-semibold text-blue-900 bg-blue-100/80 px-2 py-0.5 rounded border border-blue-200">
+                              🏛️ {patronData.institutionCode}
+                            </span>
+                          )}
+                          {patronData.courseName && (
+                            <span className="font-medium text-slate-800 bg-slate-200/70 px-2 py-0.5 rounded">
+                              {patronData.courseName}
+                            </span>
+                          )}
+                          {patronData.departmentName && (
+                            <span className="text-slate-500">
+                              &bull; {patronData.departmentName}
+                            </span>
+                          )}
+                          {patronData.academicYear && (
+                            <span className="text-slate-500 font-mono text-[11px]">
+                              (Yr {patronData.academicYear}
+                              {patronData.semester ? `, Sem ${patronData.semester}` : ""})
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
                     <div className="flex items-center space-x-2">
                       <span

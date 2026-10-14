@@ -1,7 +1,13 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import {
+  COLLEGE_CONFIGS,
+  type CollegeInfo,
+  resolveCollege,
+  resolveCourseCategory,
+} from "@/components/patrons/InstitutionalStudentRoster";
 import { Alert } from "@/components/ui/Alert";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -28,8 +34,19 @@ export interface PatronListItem {
   cardNo: string;
   fullName: string;
   patronType: string;
+  categoryId: number;
   categoryName: string;
-  departmentName: string | null;
+  institutionId?: number | null;
+  institutionCode?: string | null;
+  institutionName?: string | null;
+  courseId?: number | null;
+  courseCode?: string | null;
+  courseName?: string | null;
+  departmentId?: number | null;
+  departmentName?: string | null;
+  academicYear?: number | null;
+  semester?: number | null;
+  section?: string | null;
   email: string | null;
   mobile: string | null;
   rollNo: string | null;
@@ -42,6 +59,7 @@ export interface MasterOption {
   id: number;
   name: string;
   code: string;
+  institutionId?: number;
 }
 
 export interface CategoryOption extends MasterOption {
@@ -51,6 +69,7 @@ export interface CategoryOption extends MasterOption {
 interface PatronsClientProps {
   initialPatrons: PatronListItem[];
   categories: CategoryOption[];
+  institutions: MasterOption[];
   departments: MasterOption[];
   courses: MasterOption[];
   csrfToken: string;
@@ -60,15 +79,24 @@ interface PatronsClientProps {
 export function PatronsClient({
   initialPatrons,
   categories,
+  institutions,
   departments,
   courses,
   csrfToken,
   canManage,
 }: PatronsClientProps) {
   const router = useRouter();
+
+  // Categorical Navigation States
+  const [selectedCollege, setSelectedCollege] = useState<string>("ALL");
+  const [selectedCourse, setSelectedCourse] = useState<string>("ALL");
+  const [selectedDept, setSelectedDept] = useState<string>("ALL");
+  const [selectedYear, setSelectedYear] = useState<string>("ALL");
   const [searchTerm, setSearchTerm] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [viewMode, setViewMode] = useState<"grouped" | "table">("grouped");
+
   const [actionAlert, setActionAlert] = useState<{
     variant: "info" | "success" | "warning" | "error";
     message: string;
@@ -80,6 +108,7 @@ export function PatronsClient({
   const [newPatron, setNewPatron] = useState({
     patronType: "STUDENT" as PatronType,
     categoryId: categories[0]?.id ? String(categories[0].id) : "1",
+    institutionId: institutions[0]?.id ? String(institutions[0].id) : "1",
     firstName: "",
     middleName: "",
     lastName: "",
@@ -87,6 +116,8 @@ export function PatronsClient({
     employeeId: "",
     departmentId: "",
     courseId: "",
+    academicYear: "1",
+    semester: "1",
     mobile: "",
     email: "",
     gender: "MALE",
@@ -108,21 +139,140 @@ export function PatronsClient({
     fullName: string;
   } | null>(null);
 
-  const filtered = initialPatrons.filter((p) => {
-    if (typeFilter && p.patronType !== typeFilter) return false;
-    if (statusFilter && p.status !== statusFilter) return false;
-    if (!searchTerm.trim()) return true;
+  // Student count by College
+  const collegeCounts = useMemo(() => {
+    const counts: Record<string, number> = {
+      ALL: initialPatrons.length,
+      RBCET: 0,
+      RBCP: 0,
+      RBCN: 0,
+      RBMI: 0,
+      RBTTI: 0,
+    };
+    for (const p of initialPatrons) {
+      const c = resolveCollege(p);
+      if (counts[c.code] !== undefined) {
+        counts[c.code]++;
+      }
+    }
+    return counts;
+  }, [initialPatrons]);
 
-    const q = searchTerm.toLowerCase();
-    return (
-      p.fullName.toLowerCase().includes(q) ||
-      p.cardNo.toLowerCase().includes(q) ||
-      (p.rollNo && p.rollNo.toLowerCase().includes(q)) ||
-      (p.employeeId && p.employeeId.toLowerCase().includes(q)) ||
-      (p.email && p.email.toLowerCase().includes(q)) ||
-      (p.mobile && p.mobile.includes(q))
-    );
-  });
+  // Available courses based on selected college
+  const availableCourses = useMemo(() => {
+    const set = new Set<string>();
+    if (selectedCollege !== "ALL" && COLLEGE_CONFIGS[selectedCollege]) {
+      for (const c of COLLEGE_CONFIGS[selectedCollege].defaultCourses) {
+        set.add(c);
+      }
+    }
+    for (const p of initialPatrons) {
+      const col = resolveCollege(p);
+      if (selectedCollege === "ALL" || col.code === selectedCollege) {
+        set.add(resolveCourseCategory(p));
+      }
+    }
+    return Array.from(set);
+  }, [initialPatrons, selectedCollege]);
+
+  // Available departments
+  const availableDepts = useMemo(() => {
+    const set = new Set<string>();
+    for (const p of initialPatrons) {
+      if (p.departmentName) set.add(p.departmentName);
+    }
+    return Array.from(set);
+  }, [initialPatrons]);
+
+  // Filtered patrons
+  const filtered = useMemo(() => {
+    return initialPatrons.filter((p) => {
+      const col = resolveCollege(p);
+      const crs = resolveCourseCategory(p);
+
+      if (selectedCollege !== "ALL" && col.code !== selectedCollege) return false;
+      if (selectedCourse !== "ALL" && crs !== selectedCourse) return false;
+      if (selectedDept !== "ALL" && p.departmentName !== selectedDept) return false;
+      if (selectedYear !== "ALL" && String(p.academicYear) !== selectedYear) return false;
+      if (typeFilter && p.patronType !== typeFilter) return false;
+      if (statusFilter && p.status !== statusFilter) return false;
+
+      if (!searchTerm.trim()) return true;
+
+      const q = searchTerm.toLowerCase();
+      return (
+        p.fullName.toLowerCase().includes(q) ||
+        p.cardNo.toLowerCase().includes(q) ||
+        (p.rollNo && p.rollNo.toLowerCase().includes(q)) ||
+        (p.employeeId && p.employeeId.toLowerCase().includes(q)) ||
+        (p.email && p.email.toLowerCase().includes(q)) ||
+        (p.mobile && p.mobile.includes(q)) ||
+        (p.departmentName && p.departmentName.toLowerCase().includes(q)) ||
+        col.code.toLowerCase().includes(q) ||
+        crs.toLowerCase().includes(q)
+      );
+    });
+  }, [
+    initialPatrons,
+    selectedCollege,
+    selectedCourse,
+    selectedDept,
+    selectedYear,
+    typeFilter,
+    statusFilter,
+    searchTerm,
+  ]);
+
+  // Grouped structure: College -> Program/Course -> Patrons
+  const groupedData = useMemo(() => {
+    const groups: Record<
+      string,
+      {
+        college: CollegeInfo;
+        courseGroups: Record<string, PatronListItem[]>;
+        total: number;
+      }
+    > = {};
+
+    const collegeOrder = ["RBCET", "RBCP", "RBCN", "RBMI", "RBTTI"];
+    for (const cCode of collegeOrder) {
+      if (selectedCollege === "ALL" || selectedCollege === cCode) {
+        groups[cCode] = {
+          college: COLLEGE_CONFIGS[cCode],
+          courseGroups: {},
+          total: 0,
+        };
+      }
+    }
+
+    for (const p of filtered) {
+      const col = resolveCollege(p);
+      const crs = resolveCourseCategory(p);
+
+      if (!groups[col.code]) {
+        groups[col.code] = {
+          college: col,
+          courseGroups: {},
+          total: 0,
+        };
+      }
+
+      if (!groups[col.code].courseGroups[crs]) {
+        groups[col.code].courseGroups[crs] = [];
+      }
+
+      groups[col.code].courseGroups[crs].push(p);
+      groups[col.code].total++;
+    }
+
+    return groups;
+  }, [filtered, selectedCollege]);
+
+  // Filter courses for registration modal based on selected institution
+  const registerModalCourses = useMemo(() => {
+    const instId = Number(newPatron.institutionId);
+    return courses.filter((c) => !c.institutionId || c.institutionId === instId);
+  }, [courses, newPatron.institutionId]);
 
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -139,6 +289,7 @@ export function PatronsClient({
         body: JSON.stringify({
           patronType: newPatron.patronType,
           categoryId: Number(newPatron.categoryId),
+          institutionId: Number(newPatron.institutionId),
           firstName: newPatron.firstName,
           middleName: newPatron.middleName || undefined,
           lastName: newPatron.lastName || undefined,
@@ -146,6 +297,8 @@ export function PatronsClient({
           employeeId: newPatron.employeeId || undefined,
           departmentId: newPatron.departmentId ? Number(newPatron.departmentId) : undefined,
           courseId: newPatron.courseId ? Number(newPatron.courseId) : undefined,
+          academicYear: newPatron.academicYear ? Number(newPatron.academicYear) : undefined,
+          semester: newPatron.semester ? Number(newPatron.semester) : undefined,
           mobile: newPatron.mobile || undefined,
           email: newPatron.email || undefined,
           gender: newPatron.gender || undefined,
@@ -166,6 +319,7 @@ export function PatronsClient({
         setNewPatron({
           patronType: "STUDENT",
           categoryId: categories[0]?.id ? String(categories[0].id) : "1",
+          institutionId: institutions[0]?.id ? String(institutions[0].id) : "1",
           firstName: "",
           middleName: "",
           lastName: "",
@@ -173,6 +327,8 @@ export function PatronsClient({
           employeeId: "",
           departmentId: "",
           courseId: "",
+          academicYear: "1",
+          semester: "1",
           mobile: "",
           email: "",
           gender: "MALE",
@@ -254,75 +410,422 @@ export function PatronsClient({
         </Alert>
       )}
 
-      {/* Search and Filters Toolbar */}
-      <div className="flex flex-col justify-between gap-4 rounded-xl border border-slate-200 bg-white p-4 shadow-xs sm:flex-row sm:items-center">
-        <div className="flex flex-1 flex-col sm:flex-row gap-3">
-          <div className="w-full sm:w-80">
-            <Input
-              id="patron-search-filter"
-              placeholder="Search name, card, roll no, mobile, email..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
-          </div>
-          <div className="w-full sm:w-40">
-            <Select
-              id="patron-type-filter"
-              value={typeFilter}
-              onChange={(e) => setTypeFilter(e.target.value)}
-              options={[
-                { value: "", label: "All Types" },
-                ...PATRON_TYPES.map((t) => ({ value: t, label: t })),
-              ]}
-            />
-          </div>
-          <div className="w-full sm:w-40">
-            <Select
-              id="patron-status-filter"
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              options={[
-                { value: "", label: "All Statuses" },
-                ...PATRON_STATUSES.map((s) => ({ value: s, label: s })),
-              ]}
-            />
-          </div>
+      {/* Institutional KPI Cards */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6 text-xs">
+        <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-xs">
+          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+            Total Members
+          </span>
+          <div className="mt-1 text-xl font-bold text-slate-900">{initialPatrons.length}</div>
+          <div className="text-[10px] text-slate-400">All Campuses</div>
         </div>
 
-        <div className="flex items-center space-x-3">
-          <span className="text-xs text-slate-500">
-            {filtered.length} of {initialPatrons.length} patrons
-          </span>
-          {canManage && (
-            <Button variant="primary" onClick={() => setShowRegisterModal(true)}>
-              + Register Patron
-            </Button>
-          )}
+        {Object.values(COLLEGE_CONFIGS).map((cfg) => {
+          const count = collegeCounts[cfg.code] || 0;
+          return (
+            <div
+              key={cfg.code}
+              className={`rounded-xl border p-3.5 shadow-xs cursor-pointer transition ${
+                selectedCollege === cfg.code
+                  ? "border-blue-500 bg-blue-50/50 shadow-sm"
+                  : "border-slate-200 bg-white hover:border-slate-300"
+              }`}
+              onClick={() => {
+                setSelectedCollege(selectedCollege === cfg.code ? "ALL" : cfg.code);
+                setSelectedCourse("ALL");
+              }}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                  {cfg.code}
+                </span>
+                <span className="text-sm">{cfg.icon}</span>
+              </div>
+              <div className="mt-1 text-xl font-bold text-slate-900">{count}</div>
+              <div className="text-[10px] text-slate-500 truncate">{cfg.defaultCourses.join(", ")}</div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* College & Course Categorical Tabs Toolbar */}
+      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs space-y-3">
+        {/* College Pills */}
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
+          <span className="font-bold text-slate-500 text-[11px] uppercase mr-1">College:</span>
+          <button
+            type="button"
+            onClick={() => {
+              setSelectedCollege("ALL");
+              setSelectedCourse("ALL");
+            }}
+            className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 font-semibold transition border ${
+              selectedCollege === "ALL"
+                ? "bg-slate-900 text-white border-slate-900 shadow-xs"
+                : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
+            }`}
+          >
+            <span>🏛️</span>
+            <span>All Colleges</span>
+            <span
+              className={`ml-1 rounded-full px-1.5 py-0.2 text-[10px] ${
+                selectedCollege === "ALL" ? "bg-slate-800 text-white" : "bg-slate-100 text-slate-700"
+              }`}
+            >
+              {collegeCounts.ALL}
+            </span>
+          </button>
+
+          {Object.values(COLLEGE_CONFIGS).map((cfg) => {
+            const isSelected = selectedCollege === cfg.code;
+            const count = collegeCounts[cfg.code] || 0;
+            return (
+              <button
+                key={cfg.code}
+                type="button"
+                onClick={() => {
+                  setSelectedCollege(cfg.code);
+                  setSelectedCourse("ALL");
+                }}
+                className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 font-semibold transition border ${
+                  isSelected
+                    ? "bg-blue-900 text-white border-blue-900 shadow-xs"
+                    : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
+                }`}
+              >
+                <span>{cfg.icon}</span>
+                <span>{cfg.code}</span>
+                <span
+                  className={`ml-1 rounded-full px-1.5 py-0.2 text-[10px] ${
+                    isSelected ? "bg-blue-800 text-white" : "bg-slate-100 text-slate-700"
+                  }`}
+                >
+                  {count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Program / Course Sub-Pills */}
+        {availableCourses.length > 0 && (
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs bg-slate-50 p-2.5 rounded-xl border border-slate-200">
+            <span className="font-bold text-slate-500 text-[11px] uppercase mr-1">
+              {selectedCollege === "ALL" ? "Program:" : `${selectedCollege} Programs:`}
+            </span>
+            <button
+              type="button"
+              onClick={() => setSelectedCourse("ALL")}
+              className={`rounded-lg px-3 py-1 font-medium transition ${
+                selectedCourse === "ALL"
+                  ? "bg-white text-blue-900 border border-slate-300 shadow-xs font-bold"
+                  : "text-slate-600 hover:text-slate-900 hover:bg-white/60"
+              }`}
+            >
+              All Programs
+            </button>
+            {availableCourses.map((crs) => {
+              const isSelected = selectedCourse === crs;
+              const count = initialPatrons.filter((p) => {
+                const cMatch =
+                  selectedCollege === "ALL" || resolveCollege(p).code === selectedCollege;
+                return cMatch && resolveCourseCategory(p) === crs;
+              }).length;
+
+              return (
+                <button
+                  key={crs}
+                  type="button"
+                  onClick={() => setSelectedCourse(crs)}
+                  className={`flex items-center gap-1 rounded-lg px-3 py-1 font-medium transition ${
+                    isSelected
+                      ? "bg-white text-blue-900 border border-slate-300 shadow-xs font-bold"
+                      : "text-slate-600 hover:text-slate-900 hover:bg-white/60"
+                  }`}
+                >
+                  <span>{crs}</span>
+                  <span className="text-[10px] text-slate-400 font-mono">({count})</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Search, Filter Dropdowns, and Action Bar */}
+        <div className="flex flex-col gap-3 pt-2 sm:flex-row sm:items-center sm:justify-between border-t border-slate-100 text-xs">
+          <div className="flex flex-1 flex-wrap gap-2.5 items-center">
+            <div className="w-full sm:w-64">
+              <Input
+                id="patron-search-filter"
+                placeholder="Search name, roll no, card, branch..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
+            </div>
+            <div className="w-full sm:w-44">
+              <Select
+                id="patron-dept-filter"
+                value={selectedDept}
+                onChange={(e) => setSelectedDept(e.target.value)}
+                options={[
+                  { value: "ALL", label: "All Branches" },
+                  ...availableDepts.map((d) => ({ value: d, label: d })),
+                ]}
+              />
+            </div>
+            <div className="w-full sm:w-36">
+              <Select
+                id="patron-year-filter"
+                value={selectedYear}
+                onChange={(e) => setSelectedYear(e.target.value)}
+                options={[
+                  { value: "ALL", label: "All Years" },
+                  { value: "1", label: "1st Year" },
+                  { value: "2", label: "2nd Year" },
+                  { value: "3", label: "3rd Year" },
+                  { value: "4", label: "4th Year" },
+                ]}
+              />
+            </div>
+            <div className="w-full sm:w-32">
+              <Select
+                id="patron-type-filter"
+                value={typeFilter}
+                onChange={(e) => setTypeFilter(e.target.value)}
+                options={[
+                  { value: "", label: "All Types" },
+                  ...PATRON_TYPES.map((t) => ({ value: t, label: t })),
+                ]}
+              />
+            </div>
+            <div className="w-full sm:w-32">
+              <Select
+                id="patron-status-filter"
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                options={[
+                  { value: "", label: "All Statuses" },
+                  ...PATRON_STATUSES.map((s) => ({ value: s, label: s })),
+                ]}
+              />
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2.5">
+            {/* View Mode Toggle */}
+            <div className="flex rounded-lg border border-slate-200 bg-slate-100 p-0.5 text-xs font-medium">
+              <button
+                type="button"
+                onClick={() => setViewMode("grouped")}
+                className={`rounded-md px-2.5 py-1 transition ${
+                  viewMode === "grouped"
+                    ? "bg-white text-blue-900 shadow-xs font-semibold"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                Categorized
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode("table")}
+                className={`rounded-md px-2.5 py-1 transition ${
+                  viewMode === "table"
+                    ? "bg-white text-blue-900 shadow-xs font-semibold"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                Table View
+              </button>
+            </div>
+
+            <span className="text-xs text-slate-500 whitespace-nowrap">
+              {filtered.length} of {initialPatrons.length}
+            </span>
+
+            {canManage && (
+              <Button variant="primary" size="sm" onClick={() => setShowRegisterModal(true)}>
+                + Register Patron
+              </Button>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Patron Roster Table */}
+      {/* Main Patron Roster Display */}
       {filtered.length === 0 ? (
         <EmptyState
           title="No Patrons Found"
           description={
             initialPatrons.length === 0
               ? "No student or faculty memberships registered yet. Click '+ Register Patron' or use Bulk Import."
-              : "No patrons matched the search filter."
+              : "No patrons match the selected College, Program, Branch, or search filter."
           }
           icon="👥"
         />
+      ) : viewMode === "grouped" ? (
+        /* Categorized Grouped Tree View */
+        <div className="space-y-5">
+          {Object.entries(groupedData).map(([cCode, group]) => {
+            if (group.total === 0 && selectedCollege === "ALL") return null;
+            const college = group.college;
+            const courseEntries = Object.entries(group.courseGroups);
+
+            return (
+              <div
+                key={cCode}
+                className={`rounded-xl border ${college.border} bg-white shadow-xs overflow-hidden`}
+              >
+                {/* College Banner Header */}
+                <div
+                  className={`flex flex-col sm:flex-row sm:items-center sm:justify-between px-5 py-3.5 ${college.bgLight} border-b border-slate-200`}
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-white shadow-xs text-lg border border-slate-200">
+                      {college.icon}
+                    </span>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-white border border-slate-200 text-slate-900">
+                          {college.code}
+                        </span>
+                        <h3 className="text-sm font-bold text-slate-900">{college.fullName}</h3>
+                      </div>
+                      <p className="text-[11px] text-slate-500 mt-0.5">
+                        Campus Library &bull; {courseEntries.length} program categories
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="mt-2 sm:mt-0 flex items-center gap-2">
+                    <span className="inline-flex rounded-full bg-white px-2.5 py-0.5 text-xs font-bold text-slate-700 border border-slate-200 shadow-2xs">
+                      {group.total} Registered Members
+                    </span>
+                  </div>
+                </div>
+
+                {/* Programs under this College */}
+                {courseEntries.length === 0 ? (
+                  <div className="p-6 text-center text-xs text-slate-400">
+                    No active registrations in this college category.
+                  </div>
+                ) : (
+                  <div className="divide-y divide-slate-100">
+                    {courseEntries.map(([courseName, patronsInCourse]) => (
+                      <div key={courseName} className="p-4 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="text-blue-900 font-bold text-xs">📘 {courseName}</span>
+                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600 font-mono">
+                              {patronsInCourse.length} students
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Student Sub-Table */}
+                        <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+                          <Table>
+                            <TableHead>
+                              <tr>
+                                <TableHeaderCell>Card Number</TableHeaderCell>
+                                <TableHeaderCell>Full Name</TableHeaderCell>
+                                <TableHeaderCell>Type &amp; Category</TableHeaderCell>
+                                <TableHeaderCell>Roll / Employee ID</TableHeaderCell>
+                                <TableHeaderCell>Branch / Dept</TableHeaderCell>
+                                <TableHeaderCell>Year / Sem</TableHeaderCell>
+                                <TableHeaderCell>Status</TableHeaderCell>
+                                <TableHeaderCell>Actions</TableHeaderCell>
+                              </tr>
+                            </TableHead>
+                            <TableBody>
+                              {patronsInCourse.map((patron) => {
+                                const isActive = patron.status === "ACTIVE";
+                                return (
+                                  <TableRow key={patron.id} className="hover:bg-slate-50/80">
+                                    <TableCell className="font-mono text-xs font-bold text-slate-900">
+                                      {patron.cardNo}
+                                    </TableCell>
+                                    <TableCell>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleViewProfile(patron.id)}
+                                        className="font-bold text-slate-900 hover:text-blue-900 transition text-left"
+                                      >
+                                        {patron.fullName}
+                                      </button>
+                                      {patron.email && (
+                                        <div className="text-[10px] text-slate-400 font-mono">
+                                          {patron.email}
+                                        </div>
+                                      )}
+                                    </TableCell>
+                                    <TableCell>
+                                      <div className="space-y-0.5">
+                                        <span className="inline-flex rounded bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase text-slate-700">
+                                          {patron.patronType}
+                                        </span>
+                                        <div className="text-[10px] text-slate-500">
+                                          {patron.categoryName}
+                                        </div>
+                                      </div>
+                                    </TableCell>
+                                    <TableCell className="font-mono text-xs text-slate-700">
+                                      {patron.rollNo || patron.employeeId || "—"}
+                                    </TableCell>
+                                    <TableCell className="text-xs text-slate-600">
+                                      {patron.departmentName || "—"}
+                                    </TableCell>
+                                    <TableCell className="text-xs text-slate-600">
+                                      {patron.academicYear
+                                        ? `Yr ${patron.academicYear}`
+                                        : "—"}
+                                      {patron.semester ? ` (Sem ${patron.semester})` : ""}
+                                    </TableCell>
+                                    <TableCell>
+                                      <span
+                                        className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
+                                          isActive
+                                            ? "bg-emerald-100 text-emerald-800"
+                                            : "bg-red-100 text-red-800"
+                                        }`}
+                                      >
+                                        {patron.status}
+                                      </span>
+                                    </TableCell>
+                                    <TableCell>
+                                      <Button
+                                        variant="secondary"
+                                        size="sm"
+                                        onClick={() => handleViewProfile(patron.id)}
+                                      >
+                                        Profile
+                                      </Button>
+                                    </TableCell>
+                                  </TableRow>
+                                );
+                              })}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       ) : (
+        /* Unified Roster Table View */
         <div className="rounded-xl border border-slate-200 bg-white shadow-xs overflow-hidden">
           <Table>
             <TableHead>
               <tr>
                 <TableHeaderCell>Card Number</TableHeaderCell>
                 <TableHeaderCell>Full Name</TableHeaderCell>
-                <TableHeaderCell>Type &amp; Category</TableHeaderCell>
-                <TableHeaderCell>Roll / Employee ID</TableHeaderCell>
-                <TableHeaderCell>Department</TableHeaderCell>
-                <TableHeaderCell>Card Expiry</TableHeaderCell>
+                <TableHeaderCell>College</TableHeaderCell>
+                <TableHeaderCell>Program &amp; Branch</TableHeaderCell>
+                <TableHeaderCell>Roll / ID</TableHeaderCell>
+                <TableHeaderCell>Year / Sem</TableHeaderCell>
                 <TableHeaderCell>Status</TableHeaderCell>
                 <TableHeaderCell>Actions</TableHeaderCell>
               </tr>
@@ -330,6 +833,9 @@ export function PatronsClient({
             <TableBody>
               {filtered.map((patron) => {
                 const isActive = patron.status === "ACTIVE";
+                const college = resolveCollege(patron);
+                const course = resolveCourseCategory(patron);
+
                 return (
                   <TableRow key={patron.id}>
                     <TableCell className="font-mono text-xs font-bold text-slate-900">
@@ -348,21 +854,25 @@ export function PatronsClient({
                       )}
                     </TableCell>
                     <TableCell>
-                      <div className="space-y-0.5">
-                        <span className="inline-flex rounded bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase text-slate-700">
-                          {patron.patronType}
-                        </span>
-                        <div className="text-[10px] text-slate-500">{patron.categoryName}</div>
+                      <span
+                        className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-[10px] font-bold border ${college.badge}`}
+                      >
+                        <span>{college.icon}</span>
+                        <span>{college.code}</span>
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      <div className="font-semibold text-slate-900 text-xs">{course}</div>
+                      <div className="text-[10px] text-slate-500">
+                        {patron.departmentName || "General"}
                       </div>
                     </TableCell>
                     <TableCell className="font-mono text-xs text-slate-700">
                       {patron.rollNo || patron.employeeId || "—"}
                     </TableCell>
                     <TableCell className="text-xs text-slate-600">
-                      {patron.departmentName || "—"}
-                    </TableCell>
-                    <TableCell className="text-xs text-slate-600">
-                      {new Date(patron.cardExpiry).toLocaleDateString()}
+                      {patron.academicYear ? `Yr ${patron.academicYear}` : "—"}
+                      {patron.semester ? ` (Sem ${patron.semester})` : ""}
                     </TableCell>
                     <TableCell>
                       <span
@@ -444,6 +954,31 @@ export function PatronsClient({
                   />
                 </div>
                 <div>
+                  <Select
+                    id="new-patron-institution"
+                    label="College / Institution"
+                    value={newPatron.institutionId}
+                    onChange={(e) => setNewPatron({ ...newPatron, institutionId: e.target.value })}
+                    options={institutions.map((i) => ({
+                      value: String(i.id),
+                      label: `${i.name} (${i.code})`,
+                    }))}
+                    required
+                  />
+                </div>
+                <div>
+                  <Select
+                    id="new-patron-course"
+                    label="Academic Program / Course"
+                    value={newPatron.courseId}
+                    onChange={(e) => setNewPatron({ ...newPatron, courseId: e.target.value })}
+                    options={[
+                      { value: "", label: "Select Program / Course" },
+                      ...registerModalCourses.map((c) => ({ value: String(c.id), label: c.name })),
+                    ]}
+                  />
+                </div>
+                <div>
                   <Input
                     id="new-patron-first-name"
                     label="First Name"
@@ -493,7 +1028,7 @@ export function PatronsClient({
                 <div>
                   <Select
                     id="new-patron-dept"
-                    label="Department"
+                    label="Department / Branch"
                     value={newPatron.departmentId}
                     onChange={(e) => setNewPatron({ ...newPatron, departmentId: e.target.value })}
                     options={[
@@ -504,13 +1039,15 @@ export function PatronsClient({
                 </div>
                 <div>
                   <Select
-                    id="new-patron-course"
-                    label="Academic Program / Course"
-                    value={newPatron.courseId}
-                    onChange={(e) => setNewPatron({ ...newPatron, courseId: e.target.value })}
+                    id="new-patron-year"
+                    label="Academic Year"
+                    value={newPatron.academicYear}
+                    onChange={(e) => setNewPatron({ ...newPatron, academicYear: e.target.value })}
                     options={[
-                      { value: "", label: "Select Course" },
-                      ...courses.map((c) => ({ value: String(c.id), label: c.name })),
+                      { value: "1", label: "1st Year" },
+                      { value: "2", label: "2nd Year" },
+                      { value: "3", label: "3rd Year" },
+                      { value: "4", label: "4th Year" },
                     ]}
                   />
                 </div>
@@ -627,7 +1164,11 @@ export function PatronsClient({
                 </div>
               </div>
               <div
-                className={`rounded-lg border p-3 ${profileDetail.stats.overdueLoans > 0 ? "border-amber-300 bg-amber-50" : "border-slate-200 bg-slate-50/50"}`}
+                className={`rounded-lg border p-3 ${
+                  profileDetail.stats.overdueLoans > 0
+                    ? "border-amber-300 bg-amber-50"
+                    : "border-slate-200 bg-slate-50/50"
+                }`}
               >
                 <span
                   className={
@@ -637,7 +1178,9 @@ export function PatronsClient({
                   Overdue Items
                 </span>
                 <div
-                  className={`mt-1 text-lg font-bold ${profileDetail.stats.overdueLoans > 0 ? "text-amber-900" : "text-slate-900"}`}
+                  className={`mt-1 text-lg font-bold ${
+                    profileDetail.stats.overdueLoans > 0 ? "text-amber-900" : "text-slate-900"
+                  }`}
                 >
                   {profileDetail.stats.overdueLoans}
                 </div>
@@ -654,15 +1197,30 @@ export function PatronsClient({
             <div className="rounded-lg border border-slate-200 p-4 space-y-2 text-xs">
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <span className="text-slate-500">Department:</span>{" "}
+                  <span className="text-slate-500">Institution / College:</span>{" "}
                   <strong className="text-slate-800">
-                    {profileDetail.patron.departmentName || "N/A"}
+                    {resolveCollege(profileDetail.patron).fullName} (
+                    {resolveCollege(profileDetail.patron).code})
                   </strong>
                 </div>
                 <div>
                   <span className="text-slate-500">Program / Course:</span>{" "}
                   <strong className="text-slate-800">
-                    {profileDetail.patron.courseName || "N/A"}
+                    {resolveCourseCategory(profileDetail.patron)}
+                  </strong>
+                </div>
+                <div>
+                  <span className="text-slate-500">Department / Branch:</span>{" "}
+                  <strong className="text-slate-800">
+                    {profileDetail.patron.departmentName || "N/A"}
+                  </strong>
+                </div>
+                <div>
+                  <span className="text-slate-500">Academic Year:</span>{" "}
+                  <strong className="text-slate-800">
+                    {profileDetail.patron.academicYear
+                      ? `Year ${profileDetail.patron.academicYear}`
+                      : "N/A"}
                   </strong>
                 </div>
                 <div>

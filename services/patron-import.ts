@@ -39,8 +39,13 @@ export interface ValidatedPatronData {
   categoryId: number;
   categoryCode: string;
   institutionId?: number | null;
+  institutionCode?: string | null;
+  institutionName?: string | null;
   departmentId?: number | null;
+  departmentCode?: string | null;
   courseId?: number | null;
+  courseCode?: string | null;
+  courseName?: string | null;
   rollNo?: string | null;
   employeeId?: string | null;
   firstName: string;
@@ -105,6 +110,30 @@ export interface PatronImportResult {
 }
 
 /**
+ * Strips non-alphanumeric characters and converts to uppercase for flexible alias matching.
+ * E.g., "B.Tech" -> "BTECH", "B. Tech" -> "BTECH", "B-Tech" -> "BTECH", "RBCeT" -> "RBCET"
+ */
+export function cleanAlphaNum(str: string): string {
+  if (!str) return "";
+  return str.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+}
+
+/**
+ * Checks if a string represents B.Tech (e.g. "B.Tech", "BTech", "B. Tech", "btech", "Bachelor of Technology")
+ */
+export function isBTechCourse(raw: string): boolean {
+  if (!raw) return false;
+  const clean = cleanAlphaNum(raw);
+  return (
+    clean === "BTECH" ||
+    clean.startsWith("BTECH") ||
+    clean === "BACHELOROFTECHNOLOGY" ||
+    clean.startsWith("BACHELOROFTECHNOLOGY") ||
+    /\bb[\.\s\-]?tech\b/i.test(raw)
+  );
+}
+
+/**
  * Validates a patron CSV stream without performing ANY database writes (FR-PI-02).
  */
 export async function validatePatronCsv(
@@ -143,6 +172,252 @@ export async function validatePatronCsv(
   for (const crs of courses) {
     courseByCode.set(crs.code.toUpperCase(), crs);
   }
+
+  // Identify the RBCeT institution (RBMI College of Engineering and Technology / RBMI-ENG)
+  const rbcetInstitution =
+    institutions.find(
+      (inst: { code: string; name: string }) =>
+        inst.code.toUpperCase() === "RBMI-ENG" ||
+        cleanAlphaNum(inst.code) === "RBCET" ||
+        inst.name.toUpperCase().includes("ENGINEERING") ||
+        cleanAlphaNum(inst.name).includes("RBCET"),
+    ) ?? institutions[0];
+
+  const resolveInstitution = (raw: string): typeof schema.institutions.$inferSelect | undefined => {
+    if (!raw) return undefined;
+    const norm = raw.trim().toUpperCase();
+    const clean = cleanAlphaNum(raw);
+
+    // RBCET / Engineering aliases
+    if (
+      clean === "RBCET" ||
+      clean === "RBCETBAREILLY" ||
+      clean === "RBMIENG" ||
+      clean === "RBMICET" ||
+      clean === "CET" ||
+      norm.includes("ENGINEERING")
+    ) {
+      return rbcetInstitution;
+    }
+
+    // Direct code lookup
+    const direct = institutionByCode.get(norm);
+    if (direct) return direct;
+
+    // Cleaned code lookup
+    for (const inst of institutions) {
+      if (cleanAlphaNum(inst.code) === clean) return inst;
+    }
+
+    // Name substring lookup
+    for (const inst of institutions) {
+      if (inst.name.toUpperCase().includes(norm) || cleanAlphaNum(inst.name).includes(clean)) {
+        return inst;
+      }
+    }
+
+    // Common abbreviations
+    if (clean === "RBMIMGMT" || clean === "MGMT" || clean === "RBCM" || norm.includes("MANAGEMENT")) {
+      return institutions.find((i: { code: string }) => i.code.toUpperCase() === "RBMI-MGMT");
+    }
+    if (clean === "RBMIPHARM" || clean === "PHARM" || clean === "PHARMACY" || clean === "RBCP") {
+      return institutions.find((i: { code: string }) => i.code.toUpperCase() === "RBMI-PHARM");
+    }
+    if (clean === "RBMINURS" || clean === "NURS" || clean === "NURSING" || clean === "RBCN") {
+      return institutions.find((i: { code: string }) => i.code.toUpperCase() === "RBMI-NURS");
+    }
+    if (clean === "RBMITECH" || clean === "ITM" || clean === "RBMITM" || clean === "TECH") {
+      return institutions.find((i: { code: string }) => i.code.toUpperCase() === "RBMI-TECH");
+    }
+
+    return undefined;
+  };
+
+  const resolveCourse = (
+    raw: string,
+    rawDept?: string | null,
+  ): typeof schema.courses.$inferSelect | undefined => {
+    if (!raw) return undefined;
+    const norm = raw.trim().toUpperCase();
+    const clean = cleanAlphaNum(raw);
+
+    // 1. If it's B.Tech:
+    if (isBTechCourse(raw)) {
+      const deptUpper = (rawDept || "").toUpperCase();
+      // If branch is specified, try branch-specific B.Tech course
+      if (deptUpper.includes("CS") || deptUpper.includes("COMP") || deptUpper.includes("IT")) {
+        const cs = courseByCode.get("BTECH-CS");
+        if (cs) return cs;
+      } else if (deptUpper.includes("MECH") || deptUpper === "ME") {
+        const me = courseByCode.get("BTECH-ME");
+        if (me) return me;
+      } else if (deptUpper.includes("CIVIL") || deptUpper === "CE") {
+        const ce = courseByCode.get("BTECH-CE");
+        if (ce) return ce;
+      } else if (deptUpper.includes("ELECTR") || deptUpper === "EE") {
+        const ee = courseByCode.get("BTECH-EE");
+        if (ee) return ee;
+      } else if (deptUpper.includes("COMM") || deptUpper === "ECE" || deptUpper === "EC") {
+        const ec = courseByCode.get("BTECH-EC");
+        if (ec) return ec;
+      }
+
+      // If no branch match or generic B.Tech:
+      const genericBtech = courseByCode.get("BTECH");
+      if (genericBtech) return genericBtech;
+
+      const csFallback = courseByCode.get("BTECH-CS");
+      if (csFallback) return csFallback;
+
+      const anyBtech = courses.find(
+        (c: { code: string; name: string }) => isBTechCourse(c.code) || isBTechCourse(c.name),
+      );
+      if (anyBtech) return anyBtech;
+    }
+
+    // 2. Direct code match
+    const byCode = courseByCode.get(norm);
+    if (byCode) return byCode;
+
+    // 3. Cleaned code match
+    for (const c of courses) {
+      if (cleanAlphaNum(c.code) === clean) return c;
+    }
+
+    // 4. Common degree abbreviations
+    if (clean === "MBA" || clean === "MASTEROFBUSINESSADMINISTRATION") {
+      const mba = courseByCode.get("MBA");
+      if (mba) return mba;
+    }
+    if (clean === "BBA" || clean === "BACHELOROFBUSINESSADMINISTRATION") {
+      const bba = courseByCode.get("BBA");
+      if (bba) return bba;
+    }
+    if (clean === "MCA" || clean === "MASTEROFCOMPUTERAPPLICATIONS") {
+      const mca = courseByCode.get("MCA");
+      if (mca) return mca;
+    }
+    if (clean === "BCA" || clean === "BACHELOROFCOMPUTERAPPLICATIONS") {
+      const bca = courseByCode.get("BCA");
+      if (bca) return bca;
+    }
+    if (clean === "BPHARM" || clean === "BPHARMACY" || clean === "BACHELOROFPHARMACY") {
+      const bpharm = courseByCode.get("BPHARM");
+      if (bpharm) return bpharm;
+    }
+    if (clean === "BSCNURS" || clean === "BSCNURSING" || clean === "BSCN") {
+      const bscnurs = courseByCode.get("BSC-NURS");
+      if (bscnurs) return bscnurs;
+    }
+
+    // 5. Name substring or cleaned name match
+    for (const c of courses) {
+      if (c.name.toUpperCase().includes(norm) || cleanAlphaNum(c.name).includes(clean)) {
+        return c;
+      }
+    }
+
+    return undefined;
+  };
+
+  const resolveDepartment = (raw: string): typeof schema.departments.$inferSelect | undefined => {
+    if (!raw) return undefined;
+    const norm = raw.trim().toUpperCase();
+    const clean = cleanAlphaNum(raw);
+
+    const byCode = departmentByCode.get(norm);
+    if (byCode) return byCode;
+
+    for (const d of departments) {
+      if (cleanAlphaNum(d.code) === clean) return d;
+    }
+
+    if (
+      [
+        "CS",
+        "CSE",
+        "COMPUTERSCIENCE",
+        "COMPUTERSCIENCEANDENGINEERING",
+        "COMPUTERSCIENCEENGINEERING",
+      ].includes(clean)
+    ) {
+      return departmentByCode.get("CSE");
+    }
+    if (["IT", "INFORMATIONTECHNOLOGY"].includes(clean)) {
+      return departmentByCode.get("IT");
+    }
+    if (["ME", "MECH", "MECHANICAL", "MECHANICALENGINEERING"].includes(clean)) {
+      return departmentByCode.get("ME");
+    }
+    if (["CE", "CIVIL", "CIVILENGINEERING"].includes(clean)) {
+      return departmentByCode.get("CE");
+    }
+    if (["EE", "ELECTRICAL", "ELECTRICALENGINEERING"].includes(clean)) {
+      return departmentByCode.get("EE");
+    }
+    if (
+      [
+        "ECE",
+        "EC",
+        "ELECTRONICS",
+        "ELECTRONICSANDCOMMUNICATION",
+        "ELECTRONICSCOMMUNICATION",
+      ].includes(clean)
+    ) {
+      return departmentByCode.get("ECE");
+    }
+    if (["MBA", "MANAGEMENT", "MANAGEMENTSTUDIES"].includes(clean)) {
+      return departmentByCode.get("MBA");
+    }
+    if (["BBA", "BUSINESSADMINISTRATION"].includes(clean)) {
+      return departmentByCode.get("BBA");
+    }
+    if (["MCA", "COMPUTERAPPLICATIONS"].includes(clean)) {
+      return departmentByCode.get("MCA");
+    }
+    if (["BCA"].includes(clean)) {
+      return departmentByCode.get("BCA");
+    }
+    if (["PHARM", "PHARMACY", "PHARMACEUTICAL", "PHARMACEUTICALSCIENCES"].includes(clean)) {
+      return departmentByCode.get("PHARM");
+    }
+    if (["NURS", "NURSING", "NURSINGSCIENCES"].includes(clean)) {
+      return departmentByCode.get("NURS");
+    }
+
+    for (const d of departments) {
+      if (d.name.toUpperCase().includes(norm) || cleanAlphaNum(d.name).includes(clean)) {
+        return d;
+      }
+    }
+
+    return undefined;
+  };
+
+  const resolveCategory = (raw: string): typeof schema.patronCategories.$inferSelect | undefined => {
+    if (!raw) return undefined;
+    const norm = raw.trim().toUpperCase();
+    const clean = cleanAlphaNum(raw);
+
+    const byCode = categoryByCode.get(norm);
+    if (byCode) return byCode;
+
+    for (const c of categories) {
+      if (cleanAlphaNum(c.code) === clean) return c;
+    }
+
+    if (isBTechCourse(raw) || clean === "BTECHSTUDENT") {
+      return categoryByCode.get("BTECH");
+    }
+
+    for (const c of categories) {
+      if (c.name.toUpperCase().includes(norm) || cleanAlphaNum(c.name).includes(clean)) {
+        return c;
+      }
+    }
+
+    return undefined;
+  };
 
   // Default category resolution
   let defaultCategory = categories.find((c: { id: number }) => c.id === options.defaultCategoryId);
@@ -295,11 +570,41 @@ export async function validatePatronCsv(
       }
     }
 
+    // --- Extract raw course, department, institute fields ---
+    const rawCourse = getFieldValue(raw, "course", [
+      "program",
+      "degree",
+      "course_name",
+      "programme",
+    ]);
+    const rawDept = getFieldValue(raw, "department", [
+      "branch",
+      "dept",
+      "department_name",
+      "specialization",
+      "stream",
+    ]);
+    const rawInst = getFieldValue(raw, "institute", [
+      "institution",
+      "college",
+      "college_name",
+      "institute_name",
+      "institution_name",
+      "campus",
+    ]);
+
+    const isBTech = rawCourse ? isBTechCourse(rawCourse) : false;
+
     // --- Patron Category ---
     let category = defaultCategory;
-    const rawCat = getFieldValue(raw, "category", ["patron_category", "cat"]);
+    const rawCat = getFieldValue(raw, "category", [
+      "patron_category",
+      "cat",
+      "category_name",
+      "type",
+    ]);
     if (rawCat) {
-      const found = categoryByCode.get(rawCat.toUpperCase());
+      const found = resolveCategory(rawCat);
       if (found) {
         if (importType === "FACULTY" && !["FACULTY", "STAFF"].includes(found.patronType)) {
           messages.push(`Category "${rawCat}" is not a Faculty/Staff category`);
@@ -311,6 +616,14 @@ export async function validatePatronCsv(
         messages.push(`Unknown category code "${rawCat}"`);
         isError = true;
       }
+    } else if (importType === "STUDENT" && isBTech) {
+      // Auto-assign BTECH student category if course is B.Tech
+      const btechCat =
+        categoryByCode.get("BTECH") ??
+        categories.find((c: { code: string }) => c.code.toUpperCase() === "BTECH");
+      if (btechCat) {
+        category = btechCat;
+      }
     }
 
     if (!category) {
@@ -320,9 +633,14 @@ export async function validatePatronCsv(
 
     // --- Institute, Course, Department lookups ---
     let institutionId = options.defaultInstitutionId ?? null;
-    const rawInst = getFieldValue(raw, "institute", ["institution", "college"]);
-    if (rawInst) {
-      const found = institutionByCode.get(rawInst.toUpperCase());
+
+    if (isBTech) {
+      // Requirement: "If the course is BTech, the college name will automatically be RBCeT, doesn't matter if it is mentioned or not."
+      if (rbcetInstitution) {
+        institutionId = rbcetInstitution.id;
+      }
+    } else if (rawInst) {
+      const found = resolveInstitution(rawInst);
       if (found) {
         institutionId = found.id;
       } else {
@@ -331,9 +649,8 @@ export async function validatePatronCsv(
     }
 
     let departmentId: number | null = null;
-    const rawDept = getFieldValue(raw, "department", ["branch", "dept"]);
     if (rawDept) {
-      const found = departmentByCode.get(rawDept.toUpperCase());
+      const found = resolveDepartment(rawDept);
       if (found) {
         departmentId = found.id;
       } else {
@@ -342,9 +659,8 @@ export async function validatePatronCsv(
     }
 
     let courseId: number | null = null;
-    const rawCourse = getFieldValue(raw, "course", ["program", "degree"]);
     if (rawCourse) {
-      const found = courseByCode.get(rawCourse.toUpperCase());
+      const found = resolveCourse(rawCourse, rawDept);
       if (found) {
         courseId = found.id;
       } else {
@@ -446,6 +762,10 @@ export async function validatePatronCsv(
 
     let data: ValidatedPatronData | undefined;
     if (status !== "ERROR" && cardNo && firstName && category) {
+      const resolvedInst = institutions.find((i: { id: number }) => i.id === institutionId);
+      const resolvedDept = departments.find((d: { id: number }) => d.id === departmentId);
+      const resolvedCrs = courses.find((c: { id: number }) => c.id === courseId);
+
       data = {
         rowNumber,
         cardNo,
@@ -453,8 +773,17 @@ export async function validatePatronCsv(
         categoryId: category.id,
         categoryCode: category.code,
         institutionId,
+        institutionCode: resolvedInst
+          ? resolvedInst.code === "RBMI-ENG"
+            ? "RBCeT"
+            : resolvedInst.code
+          : null,
+        institutionName: resolvedInst?.name ?? null,
         departmentId,
+        departmentCode: resolvedDept?.code ?? null,
         courseId,
+        courseCode: resolvedCrs?.code ?? (isBTech ? "BTECH" : null),
+        courseName: resolvedCrs?.name ?? (isBTech ? "Bachelor of Technology (B.Tech)" : null),
         rollNo,
         employeeId,
         firstName,

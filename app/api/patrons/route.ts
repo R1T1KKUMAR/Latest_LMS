@@ -17,6 +17,18 @@ export async function GET(request: NextRequest) {
     const departmentId = searchParams.get("departmentId")
       ? Number(searchParams.get("departmentId"))
       : undefined;
+    const institutionId = searchParams.get("institutionId")
+      ? Number(searchParams.get("institutionId"))
+      : undefined;
+    const courseId = searchParams.get("courseId")
+      ? Number(searchParams.get("courseId"))
+      : undefined;
+    const academicYear = searchParams.get("academicYear")
+      ? Number(searchParams.get("academicYear"))
+      : undefined;
+    const semester = searchParams.get("semester")
+      ? Number(searchParams.get("semester"))
+      : undefined;
     const page = searchParams.get("page") ? Number(searchParams.get("page")) : undefined;
     const limit = searchParams.get("limit") ? Number(searchParams.get("limit")) : undefined;
 
@@ -26,6 +38,10 @@ export async function GET(request: NextRequest) {
       patronType,
       status,
       departmentId,
+      institutionId,
+      courseId,
+      academicYear,
+      semester,
       page,
       limit,
     });

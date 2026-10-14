@@ -1,7 +1,11 @@
-import { count } from "drizzle-orm";
+import { count, eq } from "drizzle-orm";
 import Link from "next/link";
 import { ForbiddenCard } from "@/components/auth/ForbiddenCard";
 import { PageHeader } from "@/components/layout/PageHeader";
+import {
+  InstitutionalStudentRoster,
+  type StudentRosterItem,
+} from "@/components/patrons/InstitutionalStudentRoster";
 import { db } from "@/db";
 import * as schema from "@/db/schema";
 import { requirePageAuth } from "@/lib/auth";
@@ -36,12 +40,72 @@ export default async function AdminPortalPage() {
   const staffContext = auth.context;
   const permissions = staffContext.permissions;
 
-  // Retrieve administration stats
-  const [userCountRes, auditCountRes, libraryCountRes] = await Promise.all([
+  // Retrieve administration stats and students
+  const [userCountRes, auditCountRes, libraryCountRes, rawStudents] = await Promise.all([
     db.select({ value: count() }).from(schema.users),
     db.select({ value: count() }).from(schema.auditLogs),
     db.select({ value: count() }).from(schema.libraries),
+    db
+      .select({
+        id: schema.patrons.id,
+        cardNo: schema.patrons.cardNo,
+        firstName: schema.patrons.firstName,
+        lastName: schema.patrons.lastName,
+        patronType: schema.patrons.patronType,
+        categoryId: schema.patrons.categoryId,
+        categoryName: schema.patronCategories.name,
+        institutionId: schema.patrons.institutionId,
+        institutionCode: schema.institutions.code,
+        institutionName: schema.institutions.name,
+        courseId: schema.patrons.courseId,
+        courseCode: schema.courses.code,
+        courseName: schema.courses.name,
+        departmentId: schema.patrons.departmentId,
+        departmentName: schema.departments.name,
+        academicYear: schema.patrons.academicYear,
+        semester: schema.patrons.semester,
+        section: schema.patrons.section,
+        email: schema.patrons.email,
+        mobile: schema.patrons.mobile,
+        rollNo: schema.patrons.rollNo,
+        employeeId: schema.patrons.employeeId,
+        cardExpiry: schema.patrons.cardExpiry,
+        status: schema.patrons.status,
+      })
+      .from(schema.patrons)
+      .innerJoin(schema.patronCategories, eq(schema.patrons.categoryId, schema.patronCategories.id))
+      .leftJoin(schema.institutions, eq(schema.patrons.institutionId, schema.institutions.id))
+      .leftJoin(schema.courses, eq(schema.patrons.courseId, schema.courses.id))
+      .leftJoin(schema.departments, eq(schema.patrons.departmentId, schema.departments.id))
+      .where(eq(schema.patrons.patronType, "STUDENT"))
+      .orderBy(schema.patrons.rollNo),
   ]);
+
+  const studentRosterItems: StudentRosterItem[] = rawStudents.map((s) => ({
+    id: s.id,
+    cardNo: s.cardNo,
+    fullName: [s.firstName, s.lastName].filter(Boolean).join(" "),
+    patronType: s.patronType,
+    categoryId: s.categoryId,
+    categoryName: s.categoryName,
+    institutionId: s.institutionId,
+    institutionCode: s.institutionCode,
+    institutionName: s.institutionName,
+    courseId: s.courseId,
+    courseCode: s.courseCode,
+    courseName: s.courseName,
+    departmentId: s.departmentId,
+    departmentName: s.departmentName,
+    academicYear: s.academicYear,
+    semester: s.semester,
+    section: s.section,
+    email: s.email,
+    mobile: s.mobile,
+    rollNo: s.rollNo,
+    employeeId: s.employeeId,
+    cardExpiry: String(s.cardExpiry),
+    status: s.status,
+  }));
 
   const totalStaff = userCountRes[0]?.value ?? 0;
   const totalAuditEvents = auditCountRes[0]?.value ?? 0;
@@ -87,6 +151,26 @@ export default async function AdminPortalPage() {
       permission: "ADMIN_SETTINGS",
       hasAccess: permissions.includes("ADMIN_SETTINGS"),
       stat: `${totalLibraries} library branches`,
+    },
+    {
+      id: "fines",
+      title: "Dynamic Fine Adjustment",
+      desc: "Configure daily fine rates, grace periods, overdue checkout block limits, rule-level fine caps, and calibrate assessed fines.",
+      href: "/admin/fines",
+      icon: "💰",
+      permission: "ADMIN_SETTINGS",
+      hasAccess: permissions.includes("ADMIN_SETTINGS") || permissions.includes("ADMIN_RULES"),
+      stat: "Live rate & policy calibration",
+    },
+    {
+      id: "holidays",
+      title: "Holiday & Academic Calendar",
+      desc: "Upload annual holiday calendar via CSV, declare ad-hoc college-off days, and enforce automatic fine exemptions.",
+      href: "/admin/holidays",
+      icon: "📅",
+      permission: "ADMIN_SETTINGS",
+      hasAccess: permissions.includes("ADMIN_SETTINGS"),
+      stat: "Automated fine exemption active",
     },
     {
       id: "audit",
@@ -155,6 +239,32 @@ export default async function AdminPortalPage() {
             </div>
           );
         })}
+      </div>
+
+      {/* Institutional Student Roster & Campus Distribution */}
+      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-xs">
+        <div className="mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-slate-100 pb-3">
+          <div>
+            <h2 className="text-base font-bold text-slate-900">
+              Institutional Student Roster &amp; Campus Distribution
+            </h2>
+            <p className="text-xs text-slate-500">
+              Categorical student enrollments across constituent colleges (RBCET, RBCP, RBCN, RBMI, RBTTI)
+            </p>
+          </div>
+          <Link
+            href="/patrons"
+            className="text-xs font-semibold text-blue-900 hover:underline"
+          >
+            Manage Patron Records &rarr;
+          </Link>
+        </div>
+
+        <InstitutionalStudentRoster
+          students={studentRosterItems}
+          title="Constituent College Student Roster"
+          description="Administrative directory of all registered students by College (RBCET, RBCP, RBCN, RBMI, RBTTI) and programs (B.Tech, Diploma / Polytechnic, B.Pharm, D.Pharm, Nursing, MBA, BBA, BCA, etc.)"
+        />
       </div>
 
       {/* System Specifications Card */}

@@ -200,4 +200,71 @@ describe("Phase 13: Student & Faculty CSV Import Integration Suite (FR-PI-01 to 
     expect(savedFaculty.cardNo).toBe("FAC-2026-01");
     expect(verifyPassword("FAC-2026-01", savedFaculty.passwordHash)).toBe(true);
   });
+
+  it("7. Automatically detects 'B.Tech' as BTech and auto-assigns college to RBCeT when college is omitted", async () => {
+    const studentCsv = [
+      "roll_no,first_name,last_name,gender,dob,course,department,academic_year,semester,mobile,email",
+      "240201,Aman,Gupta,M,10-01-2005,B.Tech,CSE,1,1,9876543290,aman@rbmi.in",
+      "240202,Sneha,Patel,F,12-02-2005,B. Tech,ME,1,1,9876543291,sneha@rbmi.in",
+    ].join("\n");
+
+    const buffer = Buffer.from(studentCsv, "utf8");
+    const preview = await validatePatronCsv(
+      buffer,
+      "STUDENT",
+      { fileName: "students_btech_no_college.csv" },
+      db,
+    );
+
+    expect(preview.summary.totalRows).toBe(2);
+    expect(preview.summary.okCount).toBe(2);
+    expect(preview.summary.errorCount).toBe(0);
+
+    // Row 1: Course "B.Tech" -> BTech, college automatically set to RBCeT (id 1, code RBCeT)
+    const row1 = preview.rows[0];
+    expect(row1.status).toBe("OK");
+    expect(row1.messages).toHaveLength(0);
+    expect(row1.data?.institutionCode).toBe("RBCeT");
+    expect(row1.data?.courseCode).toContain("BTECH");
+
+    // Row 2: Course "B. Tech" -> BTech, college automatically set to RBCeT
+    const row2 = preview.rows[1];
+    expect(row2.status).toBe("OK");
+    expect(row2.messages).toHaveLength(0);
+    expect(row2.data?.institutionCode).toBe("RBCeT");
+    expect(row2.data?.courseCode).toContain("BTECH");
+
+    // Commit and verify in DB
+    const result = await commitPatronImport(preview, testActor, db);
+    expect(result.importedCount).toBe(2);
+
+    const [savedAman] = await db
+      .select()
+      .from(schema.patrons)
+      .where(eq(schema.patrons.rollNo, "240201"));
+    expect(savedAman).toBeDefined();
+    expect(savedAman.institutionId).toBe(1); // RBCeT / RBMI-ENG
+  });
+
+  it("8. Automatically detects 'B.Tech' with college explicitly written as 'RBCeT'", async () => {
+    const studentCsv = [
+      "roll_no,first_name,last_name,course,college",
+      "240203,Karan,Mehra,B.Tech,RBCeT",
+    ].join("\n");
+
+    const buffer = Buffer.from(studentCsv, "utf8");
+    const preview = await validatePatronCsv(
+      buffer,
+      "STUDENT",
+      { fileName: "students_rbcet_explicit.csv" },
+      db,
+    );
+
+    expect(preview.summary.totalRows).toBe(1);
+    expect(preview.summary.okCount).toBe(1);
+    expect(preview.rows[0].data?.institutionCode).toBe("RBCeT");
+    expect(preview.rows[0].data?.institutionId).toBe(1);
+    expect(preview.rows[0].data?.courseCode).toBe("BTECH");
+  });
 });
+

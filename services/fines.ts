@@ -528,3 +528,104 @@ export async function getReceiptDetails(
     libraryName: settingsMap.get("LIBRARY_NAME") || "RBMI Central Library",
   };
 }
+
+/**
+ * Dynamically adjusts an outstanding fine amount with administrative justification (FR-FI-04, FR-AD-02).
+ * Allows admin to reduce or calibrate fine amounts, transition status if fully cleared, and audit changes.
+ */
+export async function adjustFineAmount(
+  params: {
+    fineId: number;
+    newAmount: number;
+    reason: string;
+  },
+  actor: Actor,
+  db: DbInstance = defaultDb,
+) {
+  const newAmount = Number(params.newAmount);
+  if (Number.isNaN(newAmount) || newAmount < 0) {
+    throw new Error("Adjusted fine amount must be zero or a positive number");
+  }
+
+  const reason = params.reason?.trim();
+  if (!reason) {
+    throw new Error("A justification reason is required for dynamic fine adjustment");
+  }
+
+  return await db.transaction(async (tx: DbInstance) => {
+    const [fine] = await tx
+      .select()
+      .from(schema.fines)
+      .where(eq(schema.fines.id, params.fineId))
+      .for("update");
+
+    if (!fine) {
+      throw new Error(`Fine #${params.fineId} not found`);
+    }
+
+    if (fine.status !== "OUTSTANDING") {
+      throw new Error(`Cannot adjust fine #${params.fineId} with status '${fine.status}'`);
+    }
+
+    const previousAmount = Number(fine.amount);
+    const currentPaid = Number(fine.paidAmount);
+
+    if (newAmount < currentPaid) {
+      throw new Error(
+        `New fine amount (₹${newAmount.toFixed(2)}) cannot be lower than already collected payment (₹${currentPaid.toFixed(2)})`,
+      );
+    }
+
+    let nextStatus: string;
+    let updatedFine: typeof schema.fines.$inferSelect;
+
+    if (newAmount <= 0) {
+      nextStatus = "WAIVED";
+      const [res] = await tx
+        .update(schema.fines)
+        .set({
+          status: "WAIVED",
+          reason: `${fine.reason} [Fully waived via dynamic adjustment: ${reason}]`,
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.fines.id, fine.id))
+        .returning();
+      updatedFine = res;
+    } else {
+      nextStatus = newAmount <= currentPaid ? "PAID" : "OUTSTANDING";
+      const [res] = await tx
+        .update(schema.fines)
+        .set({
+          amount: sql`${newAmount.toFixed(2)}::numeric`,
+          status: nextStatus,
+          reason: `${fine.reason} [Adjusted from ₹${previousAmount.toFixed(2)} to ₹${newAmount.toFixed(2)}: ${reason}]`,
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.fines.id, fine.id))
+        .returning();
+      updatedFine = res;
+    }
+
+    await recordAuditLog(
+      {
+        actorType: actor.actorType ?? "STAFF",
+        actorId: actor.id,
+        actorName: actor.fullName,
+        action: "FINE_ADJUST",
+        entity: "fines",
+        entityId: String(fine.id),
+        details: `Fine #${fine.id} dynamically adjusted from ₹${previousAmount.toFixed(2)} to ₹${newAmount.toFixed(2)}. Justification: ${reason}. Status: ${nextStatus}.`,
+        ipAddress: actor.ipAddress,
+      },
+      tx,
+    );
+
+    return {
+      success: true,
+      fine: updatedFine,
+      previousAmount,
+      newAmount,
+      status: nextStatus,
+    };
+  });
+}

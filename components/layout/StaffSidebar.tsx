@@ -119,6 +119,18 @@ const navGroups: NavGroup[] = [
         requiredPermissions: ["ADMIN_USERS"],
         requireAll: true,
       },
+      {
+        label: "Fine Adjustment",
+        href: "/admin/fines",
+        icon: "💰",
+        requiredPermissions: ["ADMIN_SETTINGS", "ADMIN_RULES"],
+      },
+      {
+        label: "Holiday Calendar",
+        href: "/admin/holidays",
+        icon: "📅",
+        requiredPermissions: ["ADMIN_SETTINGS"],
+      },
     ],
   },
 ];

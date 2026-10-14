@@ -15,12 +15,13 @@
     "test:integration": "vitest run tests/integration",
     "test:e2e": "playwright test",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "tsx db/migrate.ts",
-    "db:seed": "tsx db/seed.ts"
+    "db:migrate": "tsx --env-file=.env.local db/migrate.ts",
+    "db:seed": "tsx --env-file=.env.local db/seed.ts"
   },
   "dependencies": {
     "clsx": "^2.1.1",
     "csv-parse": "^7.0.3",
+    "dotenv": "^18.0.7",
     "drizzle-orm": "^0.45.3",
     "iconv-lite": "^0.7.3",
     "lucide-react": "^1.16.0",

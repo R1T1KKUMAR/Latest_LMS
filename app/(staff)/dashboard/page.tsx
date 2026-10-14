@@ -12,6 +12,10 @@ import {
   TableHeaderCell,
   TableRow,
 } from "@/components/ui/Table";
+import {
+  InstitutionalStudentRoster,
+  type StudentRosterItem,
+} from "@/components/patrons/InstitutionalStudentRoster";
 import { db } from "@/db";
 import * as schema from "@/db/schema";
 import { requirePageAuth } from "@/lib/auth";
@@ -20,6 +24,36 @@ export const metadata = {
   title: "Staff Dashboard — RBMI LMS",
   description: "Central library operational metrics and circulation summary",
 };
+
+let cachedMetricsData: { data: any; cachedAt: number } | null = null;
+const METRICS_CACHE_MS = 15 * 1000;
+
+async function getDashboardMetrics() {
+  const now = Date.now();
+  if (cachedMetricsData && now - cachedMetricsData.cachedAt < METRICS_CACHE_MS) {
+    return cachedMetricsData.data;
+  }
+  const rows = await db.execute<{
+    titleCount: number;
+    copyCount: number;
+    patronCount: number;
+    activeLoans: number;
+    overdueLoans: number;
+    unpaidFinesCount: number;
+    unpaidFinesSum: string;
+  }>(sql`
+    SELECT
+      (SELECT count(*)::int FROM bib_records) AS "titleCount",
+      (SELECT count(*)::int FROM items) AS "copyCount",
+      (SELECT count(*)::int FROM patrons WHERE status = 'ACTIVE') AS "patronCount",
+      (SELECT count(*)::int FROM loans WHERE status = 'ISSUED') AS "activeLoans",
+      (SELECT count(*)::int FROM loans WHERE status = 'ISSUED' AND due_date < CURRENT_DATE) AS "overdueLoans",
+      (SELECT count(*)::int FROM fines WHERE status = 'OUTSTANDING') AS "unpaidFinesCount",
+      (SELECT COALESCE(SUM(amount - paid_amount), 0)::text FROM fines WHERE status = 'OUTSTANDING') AS "unpaidFinesSum"
+  `);
+  cachedMetricsData = { data: rows, cachedAt: now };
+  return rows;
+}
 
 export default async function DashboardPage() {
   const auth = await requirePageAuth("DASHBOARD_VIEW");
@@ -38,31 +72,9 @@ export default async function DashboardPage() {
 
   const staffContext = auth.context;
 
-  // Query operational metrics from DB
-  const [
-    titleCountRes,
-    copyCountRes,
-    patronCountRes,
-    activeLoansRes,
-    overdueLoansRes,
-    unpaidFinesRes,
-    recentLoans,
-  ] = await Promise.all([
-    db.select({ value: count() }).from(schema.bibRecords),
-    db.select({ value: count() }).from(schema.items),
-    db.select({ value: count() }).from(schema.patrons).where(eq(schema.patrons.status, "ACTIVE")),
-    db.select({ value: count() }).from(schema.loans).where(eq(schema.loans.status, "ISSUED")),
-    db
-      .select({ value: count() })
-      .from(schema.loans)
-      .where(and(eq(schema.loans.status, "ISSUED"), lt(schema.loans.dueDate, sql`CURRENT_DATE`))),
-    db
-      .select({
-        totalAmount: sql<string>`COALESCE(SUM(amount - paid_amount), 0)`,
-        count: count(),
-      })
-      .from(schema.fines)
-      .where(eq(schema.fines.status, "OUTSTANDING")),
+  // Query operational metrics from DB in a single consolidated round-trip (with 15s RAM cache)
+  const [metricsRows, recentLoans, rawStudents] = await Promise.all([
+    getDashboardMetrics(),
     db
       .select({
         id: schema.loans.id,
@@ -81,15 +93,76 @@ export default async function DashboardPage() {
       .innerJoin(schema.bibRecords, eq(schema.items.bibId, schema.bibRecords.id))
       .orderBy(sql`${schema.loans.issueDate} DESC`)
       .limit(5),
+    db
+      .select({
+        id: schema.patrons.id,
+        cardNo: schema.patrons.cardNo,
+        firstName: schema.patrons.firstName,
+        lastName: schema.patrons.lastName,
+        patronType: schema.patrons.patronType,
+        categoryId: schema.patrons.categoryId,
+        categoryName: schema.patronCategories.name,
+        institutionId: schema.patrons.institutionId,
+        institutionCode: schema.institutions.code,
+        institutionName: schema.institutions.name,
+        courseId: schema.patrons.courseId,
+        courseCode: schema.courses.code,
+        courseName: schema.courses.name,
+        departmentId: schema.patrons.departmentId,
+        departmentName: schema.departments.name,
+        academicYear: schema.patrons.academicYear,
+        semester: schema.patrons.semester,
+        section: schema.patrons.section,
+        email: schema.patrons.email,
+        mobile: schema.patrons.mobile,
+        rollNo: schema.patrons.rollNo,
+        employeeId: schema.patrons.employeeId,
+        cardExpiry: schema.patrons.cardExpiry,
+        status: schema.patrons.status,
+      })
+      .from(schema.patrons)
+      .innerJoin(schema.patronCategories, eq(schema.patrons.categoryId, schema.patronCategories.id))
+      .leftJoin(schema.institutions, eq(schema.patrons.institutionId, schema.institutions.id))
+      .leftJoin(schema.courses, eq(schema.patrons.courseId, schema.courses.id))
+      .leftJoin(schema.departments, eq(schema.patrons.departmentId, schema.departments.id))
+      .where(eq(schema.patrons.patronType, "STUDENT"))
+      .orderBy(schema.patrons.rollNo),
   ]);
 
-  const totalTitles = titleCountRes[0]?.value ?? 0;
-  const totalCopies = copyCountRes[0]?.value ?? 0;
-  const activePatrons = patronCountRes[0]?.value ?? 0;
-  const activeLoans = activeLoansRes[0]?.value ?? 0;
-  const overdueLoans = overdueLoansRes[0]?.value ?? 0;
-  const unpaidFineAmount = Number(unpaidFinesRes[0]?.totalAmount ?? 0);
-  const unpaidFineCount = unpaidFinesRes[0]?.count ?? 0;
+  const studentRosterItems: StudentRosterItem[] = rawStudents.map((s) => ({
+    id: s.id,
+    cardNo: s.cardNo,
+    fullName: [s.firstName, s.lastName].filter(Boolean).join(" "),
+    patronType: s.patronType,
+    categoryId: s.categoryId,
+    categoryName: s.categoryName,
+    institutionId: s.institutionId,
+    institutionCode: s.institutionCode,
+    institutionName: s.institutionName,
+    courseId: s.courseId,
+    courseCode: s.courseCode,
+    courseName: s.courseName,
+    departmentId: s.departmentId,
+    departmentName: s.departmentName,
+    academicYear: s.academicYear,
+    semester: s.semester,
+    section: s.section,
+    email: s.email,
+    mobile: s.mobile,
+    rollNo: s.rollNo,
+    employeeId: s.employeeId,
+    cardExpiry: String(s.cardExpiry),
+    status: s.status,
+  }));
+
+  const metrics = (metricsRows[0] ?? {}) as any;
+  const totalTitles = Number(metrics.titleCount ?? 0);
+  const totalCopies = Number(metrics.copyCount ?? 0);
+  const activePatrons = Number(metrics.patronCount ?? 0);
+  const activeLoans = Number(metrics.activeLoans ?? 0);
+  const overdueLoans = Number(metrics.overdueLoans ?? 0);
+  const unpaidFineAmount = Number(metrics.unpaidFinesSum ?? 0);
+  const unpaidFineCount = Number(metrics.unpaidFinesCount ?? 0);
 
   const quickActions = [
     {
@@ -290,6 +363,32 @@ export default async function DashboardPage() {
             </TableBody>
           </Table>
         )}
+      </div>
+
+      {/* Institutional Student Directory & Campus Distribution */}
+      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-xs">
+        <div className="mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-slate-100 pb-3">
+          <div>
+            <h2 className="text-base font-bold text-slate-900">
+              Institutional Student Directory &amp; Campus Distribution
+            </h2>
+            <p className="text-xs text-slate-500">
+              Complete student body categorized by College (RBCET, RBCP, RBCN, RBMI, RBTTI) and Academic Program
+            </p>
+          </div>
+          <Link
+            href="/patrons"
+            className="text-xs font-semibold text-blue-900 hover:underline"
+          >
+            Open Full Patron Directory &rarr;
+          </Link>
+        </div>
+
+        <InstitutionalStudentRoster
+          students={studentRosterItems}
+          title="Student Roster by College &amp; Program"
+          description="Browse campus students classified by constituent college (RBCET, RBCP, RBCN, RBMI, RBTTI) and programs (B.Tech, Diploma / Polytechnic, Pharmacy, Nursing, Management, etc.)"
+        />
       </div>
     </div>
   );

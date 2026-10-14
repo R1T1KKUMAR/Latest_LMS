@@ -93,6 +93,55 @@ describe("Business Rules Engine: Fine Calculations (BR-06, BR-07)", () => {
       expect(res.finalOverdueFine).toBe(150.0);
       expect(res.isCapped).toBe(false);
     });
+
+    it("exempts college holidays from overdue fine calculations", () => {
+      // Due 2026-10-01, returned 2026-10-06 (5 days late: Oct 2, 3, 4, 5, 6)
+      // Oct 2 (Gandhi Jayanti) and Oct 4 (Sunday/Holiday) are college holidays
+      const res = calculateOverdueFine({
+        dueDate: "2026-10-01",
+        returnDate: "2026-10-06",
+        finePerDay: 2.0,
+        graceDays: 0,
+        holidays: ["2026-10-02", "2026-10-04"],
+      });
+
+      expect(res.daysLate).toBe(5);
+      expect(res.holidayExemptDays).toBe(2);
+      expect(res.exemptHolidayDates).toEqual(["2026-10-02", "2026-10-04"]);
+      expect(res.chargeableDays).toBe(3); // 5 - 2 = 3 days
+      expect(res.finalOverdueFine).toBe(6.0); // 3 * 2.00 = 6.00
+    });
+
+    it("returns zero fine when all overdue days fall on declared college holidays", () => {
+      const res = calculateOverdueFine({
+        dueDate: "2026-10-01",
+        returnDate: "2026-10-03", // 2 days late: Oct 2, Oct 3
+        finePerDay: 5.0,
+        graceDays: 0,
+        holidays: ["2026-10-02", "2026-10-03"], // Both days college was off
+      });
+
+      expect(res.daysLate).toBe(2);
+      expect(res.holidayExemptDays).toBe(2);
+      expect(res.chargeableDays).toBe(0);
+      expect(res.finalOverdueFine).toBe(0.0);
+    });
+
+    it("correctly combines grace days with holiday exemptions", () => {
+      // 6 days late, 2 holidays -> 4 effective days late. Grace = 2 -> 2 chargeable days.
+      const res = calculateOverdueFine({
+        dueDate: "2026-10-01",
+        returnDate: "2026-10-07", // 6 days late
+        finePerDay: 2.5,
+        graceDays: 2,
+        holidays: ["2026-10-02", "2026-10-05"],
+      });
+
+      expect(res.daysLate).toBe(6);
+      expect(res.holidayExemptDays).toBe(2);
+      expect(res.chargeableDays).toBe(2); // (6 - 2 holidays) - 2 grace = 2
+      expect(res.finalOverdueFine).toBe(5.0); // 2 * 2.5 = 5.00
+    });
   });
 
   describe("2. Lost Book Charge Calculation (BR-07, T-13)", () => {

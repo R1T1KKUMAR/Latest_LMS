@@ -35,7 +35,7 @@ export default async function PatronsPage() {
   const permissions = staffContext.permissions;
 
   // Retrieve patrons and master data
-  const [rawPatrons, categories, departments, courses] = await Promise.all([
+  const [rawPatrons, categories, departments, courses, institutions] = await Promise.all([
     db
       .select({
         id: schema.patrons.id,
@@ -45,8 +45,17 @@ export default async function PatronsPage() {
         patronType: schema.patrons.patronType,
         categoryId: schema.patrons.categoryId,
         categoryName: schema.patronCategories.name,
+        institutionId: schema.patrons.institutionId,
+        institutionCode: schema.institutions.code,
+        institutionName: schema.institutions.name,
+        courseId: schema.patrons.courseId,
+        courseCode: schema.courses.code,
+        courseName: schema.courses.name,
         departmentId: schema.patrons.departmentId,
         departmentName: schema.departments.name,
+        academicYear: schema.patrons.academicYear,
+        semester: schema.patrons.semester,
+        section: schema.patrons.section,
         email: schema.patrons.email,
         mobile: schema.patrons.mobile,
         rollNo: schema.patrons.rollNo,
@@ -56,9 +65,10 @@ export default async function PatronsPage() {
       })
       .from(schema.patrons)
       .innerJoin(schema.patronCategories, eq(schema.patrons.categoryId, schema.patronCategories.id))
+      .leftJoin(schema.institutions, eq(schema.patrons.institutionId, schema.institutions.id))
+      .leftJoin(schema.courses, eq(schema.patrons.courseId, schema.courses.id))
       .leftJoin(schema.departments, eq(schema.patrons.departmentId, schema.departments.id))
-      .orderBy(desc(schema.patrons.createdAt))
-      .limit(100),
+      .orderBy(desc(schema.patrons.createdAt)),
     db
       .select({
         id: schema.patronCategories.id,
@@ -73,6 +83,7 @@ export default async function PatronsPage() {
         id: schema.departments.id,
         name: schema.departments.name,
         code: schema.departments.code,
+        institutionId: schema.departments.institutionId,
       })
       .from(schema.departments)
       .where(eq(schema.departments.isActive, true)),
@@ -81,9 +92,18 @@ export default async function PatronsPage() {
         id: schema.courses.id,
         name: schema.courses.name,
         code: schema.courses.code,
+        institutionId: schema.courses.institutionId,
       })
       .from(schema.courses)
       .where(eq(schema.courses.isActive, true)),
+    db
+      .select({
+        id: schema.institutions.id,
+        name: schema.institutions.name,
+        code: schema.institutions.code,
+      })
+      .from(schema.institutions)
+      .where(eq(schema.institutions.isActive, true)),
   ]);
 
   const patrons: PatronListItem[] = rawPatrons.map((p) => ({
@@ -91,8 +111,19 @@ export default async function PatronsPage() {
     cardNo: p.cardNo,
     fullName: [p.firstName, p.lastName].filter(Boolean).join(" "),
     patronType: p.patronType,
+    categoryId: p.categoryId,
     categoryName: p.categoryName,
+    institutionId: p.institutionId,
+    institutionCode: p.institutionCode,
+    institutionName: p.institutionName,
+    courseId: p.courseId,
+    courseCode: p.courseCode,
+    courseName: p.courseName,
+    departmentId: p.departmentId,
     departmentName: p.departmentName,
+    academicYear: p.academicYear,
+    semester: p.semester,
+    section: p.section,
     email: p.email,
     mobile: p.mobile,
     rollNo: p.rollNo,
@@ -114,6 +145,7 @@ export default async function PatronsPage() {
       <PatronsClient
         initialPatrons={patrons}
         categories={categories as CategoryOption[]}
+        institutions={institutions as MasterOption[]}
         departments={departments as MasterOption[]}
         courses={courses as MasterOption[]}
         csrfToken={staffContext.session.csrfToken}

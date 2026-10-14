@@ -86,12 +86,24 @@ export interface RenewalContext {
   patronOutstandingFines: number;
 }
 
+export interface HolidayItem {
+  id: string;
+  date: string; // YYYY-MM-DD
+  name: string;
+  type: "ANNUAL" | "AD_HOC" | "WEEKLY_OFF";
+  description?: string;
+  libraryId?: number | null;
+  createdAt?: string;
+  createdBy?: string;
+}
+
 export interface OverdueFineCalculationParams {
   dueDate: string | Date;
   returnDate: string | Date;
   finePerDay: number | string;
   graceDays?: number;
   maxFine?: number | string | null;
+  holidays?: (string | Date)[] | Set<string>;
 }
 
 export interface OverdueFineCalculationResult {
@@ -100,6 +112,8 @@ export interface OverdueFineCalculationResult {
   calculatedFine: number;
   finalOverdueFine: number;
   isCapped: boolean;
+  holidayExemptDays?: number;
+  exemptHolidayDates?: string[];
 }
 
 export interface LostChargeCalculationParams {

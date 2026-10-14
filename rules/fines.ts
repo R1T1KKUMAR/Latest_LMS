@@ -3,7 +3,7 @@
  * Pure mathematical functions for overdue and lost book charges.
  */
 
-import { calendarDaysBetween } from "./dates";
+import { calendarDaysBetween, formatDateIso, getCalendarDaysSequence } from "./dates";
 import type {
   LostChargeCalculationParams,
   LostChargeCalculationResult,
@@ -14,9 +14,11 @@ import type {
 /**
  * Calculates overdue fines dynamically at return or loss (BR-06).
  * Fines are NEVER accrued daily in the database.
+ * College holidays are exempted from overdue charges.
  *
  * days_late = max(0, return_date - due_date)
- * chargeable_days = max(0, days_late - grace_days)
+ * effective_late = max(0, days_late - holiday_exempt_days)
+ * chargeable_days = max(0, effective_late - grace_days)
  * calculated_fine = chargeable_days * fine_per_day
  * final_overdue_fine = min(calculated_fine, max_fine) if max_fine > 0 else calculated_fine
  */
@@ -28,7 +30,30 @@ export function calculateOverdueFine(
   const graceDays = Math.max(0, params.graceDays ?? 0);
   const finePerDay = Math.max(0, Number(params.finePerDay || 0));
 
-  const chargeableDays = Math.max(0, daysLate - graceDays);
+  let holidayExemptDays = 0;
+  const exemptHolidayDates: string[] = [];
+
+  if (params.holidays && daysLate > 0) {
+    const holidaySet: Set<string> =
+      params.holidays instanceof Set
+        ? params.holidays
+        : new Set(
+            (Array.isArray(params.holidays) ? params.holidays : []).map((h) =>
+              typeof h === "string" ? h.slice(0, 10) : formatDateIso(h),
+            ),
+          );
+
+    const daysSeq = getCalendarDaysSequence(params.dueDate, params.returnDate);
+    for (const dayIso of daysSeq) {
+      if (holidaySet.has(dayIso)) {
+        holidayExemptDays++;
+        exemptHolidayDates.push(dayIso);
+      }
+    }
+  }
+
+  const effectiveDaysLate = Math.max(0, daysLate - holidayExemptDays);
+  const chargeableDays = Math.max(0, effectiveDaysLate - graceDays);
   const calculatedFine = Number((chargeableDays * finePerDay).toFixed(2));
 
   let finalOverdueFine = calculatedFine;
@@ -48,6 +73,8 @@ export function calculateOverdueFine(
     calculatedFine,
     finalOverdueFine,
     isCapped,
+    holidayExemptDays,
+    exemptHolidayDates,
   };
 }
 

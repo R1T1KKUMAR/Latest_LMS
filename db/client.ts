@@ -1,83 +1,30 @@
-import fs from "node:fs";
-import path from "node:path";
-import { PGlite } from "@electric-sql/pglite";
-import { drizzle as drizzlePglite, type PgliteDatabase } from "drizzle-orm/pglite";
-import { drizzle as drizzlePostgres, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
+import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import { env } from "@/config/env";
 import * as schema from "@/db/schema";
 
-export type AnyDatabase = PostgresJsDatabase<typeof schema> | PgliteDatabase<typeof schema>;
-
-// Connection pool options for remote / standalone PostgreSQL
+// Connection pool options for Supabase / PostgreSQL
 const connectionOptions = {
   max: 10,
-  idle_timeout: 20,
+  idle_timeout: 60,
   connect_timeout: 10,
-  onnotice: () => {}, // Suppress notice logs in production
+  prepare: false, // Supabase transaction pooler on port 6543 requires prepare: false
+  onnotice: () => {}, // Suppress notice logs
 };
 
 // Global pool instance to prevent multiple connections in development fast-refresh
 const globalForDb = globalThis as unknown as {
   conn: postgres.Sql | undefined;
-  pglite: PGlite | undefined;
-  db: AnyDatabase | undefined;
 };
 
-const localDbDir = path.resolve(process.cwd(), "data/lms-db");
-const shouldUsePglite =
-  env.DATABASE_URL.startsWith("pglite") ||
-  env.DATABASE_URL.startsWith("file:") ||
-  process.env.USE_PGLITE === "true" ||
-  fs.existsSync(localDbDir) ||
-  env.DATABASE_URL.includes("localhost:5432");
-
-let clientInstance: any;
-let dbInstance: AnyDatabase;
-
-if (shouldUsePglite) {
-  if (!fs.existsSync(localDbDir)) {
-    fs.mkdirSync(localDbDir, { recursive: true });
-  }
-
-  const pglite = globalForDb.pglite ?? new PGlite(localDbDir);
-  if (env.NODE_ENV !== "production") {
-    globalForDb.pglite = pglite;
-  }
-
-  clientInstance = {
-    end: async () => await pglite.close(),
-  };
-
-  dbInstance = drizzlePglite(pglite, { schema });
-  globalForDb.db = dbInstance;
-} else {
-  const conn = globalForDb.conn ?? postgres(env.DATABASE_URL, connectionOptions);
-  if (env.NODE_ENV !== "production") {
-    globalForDb.conn = conn;
-  }
-
-  clientInstance = conn;
-  dbInstance = drizzlePostgres(conn, { schema });
-  globalForDb.db = dbInstance;
-}
-
-export const isPglite = shouldUsePglite;
-export const client = clientInstance;
-
-export let db: AnyDatabase = dbInstance;
+const conn = globalForDb.conn ?? postgres(env.DATABASE_URL, connectionOptions);
 
 if (env.NODE_ENV !== "production") {
-  globalForDb.db = db;
+  globalForDb.conn = conn;
 }
 
-/**
- * Allows integration tests to provide a test database instance (e.g. PGlite)
- */
-export function setTestDb(testDbInstance: any) {
-  db = testDbInstance;
-  globalForDb.db = testDbInstance;
-}
+// biome-ignore lint/suspicious/noExplicitAny: Dynamic database instance supporting PGlite test DB
+export let db: any = drizzle(conn, { schema });
 
 /**
  * Health check helper verifying connection pool availability
@@ -88,14 +35,6 @@ export async function checkDatabaseConnection(): Promise<{
   error?: string;
 }> {
   try {
-    if (shouldUsePglite) {
-      const pglite = globalForDb.pglite ?? new PGlite(localDbDir);
-      const res = await pglite.query<{ version: string }>("SELECT version()");
-      return {
-        connected: true,
-        version: res.rows[0]?.version ?? "PostgreSQL (PGlite)",
-      };
-    }
     const result = await client`SELECT version()`;
     return {
       connected: true,
@@ -109,3 +48,14 @@ export async function checkDatabaseConnection(): Promise<{
     };
   }
 }
+
+/**
+ * Allows integration tests to provide a test database instance
+ */
+// biome-ignore lint/suspicious/noExplicitAny: Test database instance
+export function setTestDb(testDbInstance: any) {
+  db = testDbInstance;
+}
+
+export type AnyDatabase = any;
+export const isPglite = false;

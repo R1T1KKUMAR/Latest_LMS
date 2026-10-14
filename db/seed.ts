@@ -99,10 +99,16 @@ export async function seedDatabase(db: AnyDatabase) {
     ])
     .returning();
 
-  // 4. Courses (11 courses)
+  // 4. Courses (12 courses)
   const [courseBtech] = await db
     .insert(schema.courses)
     .values([
+      {
+        institutionId: instEng.id,
+        code: "BTECH",
+        name: "Bachelor of Technology (B.Tech)",
+        durationYears: 4,
+      },
       {
         institutionId: instEng.id,
         code: "BTECH-CS",
@@ -921,7 +927,7 @@ export async function seedDatabase(db: AnyDatabase) {
 async function main() {
   const { client, db } = await import("./client");
   try {
-    await seedDatabase(db);
+    await seedDatabase(db as any);
   } catch (err) {
     console.error("❌ Seeding failed:", err);
     process.exit(1);

@@ -403,6 +403,10 @@ export async function listPatrons(
     patronType?: string;
     status?: string;
     departmentId?: number;
+    institutionId?: number;
+    courseId?: number;
+    academicYear?: number;
+    semester?: number;
     page?: number;
     limit?: number;
   } = {},
@@ -445,6 +449,22 @@ export async function listPatrons(
     conditions.push(eq(schema.patrons.departmentId, options.departmentId));
   }
 
+  if (options.institutionId) {
+    conditions.push(eq(schema.patrons.institutionId, options.institutionId));
+  }
+
+  if (options.courseId) {
+    conditions.push(eq(schema.patrons.courseId, options.courseId));
+  }
+
+  if (options.academicYear) {
+    conditions.push(eq(schema.patrons.academicYear, options.academicYear));
+  }
+
+  if (options.semester) {
+    conditions.push(eq(schema.patrons.semester, options.semester));
+  }
+
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
   const [countRes] = await db
@@ -464,8 +484,17 @@ export async function listPatrons(
       patronType: schema.patrons.patronType,
       categoryId: schema.patrons.categoryId,
       categoryName: schema.patronCategories.name,
+      institutionId: schema.patrons.institutionId,
+      institutionCode: schema.institutions.code,
+      institutionName: schema.institutions.name,
+      courseId: schema.patrons.courseId,
+      courseCode: schema.courses.code,
+      courseName: schema.courses.name,
       departmentId: schema.patrons.departmentId,
       departmentName: schema.departments.name,
+      academicYear: schema.patrons.academicYear,
+      semester: schema.patrons.semester,
+      section: schema.patrons.section,
       email: schema.patrons.email,
       mobile: schema.patrons.mobile,
       rollNo: schema.patrons.rollNo,
@@ -476,6 +505,8 @@ export async function listPatrons(
     })
     .from(schema.patrons)
     .innerJoin(schema.patronCategories, eq(schema.patrons.categoryId, schema.patronCategories.id))
+    .leftJoin(schema.institutions, eq(schema.patrons.institutionId, schema.institutions.id))
+    .leftJoin(schema.courses, eq(schema.patrons.courseId, schema.courses.id))
     .leftJoin(schema.departments, eq(schema.patrons.departmentId, schema.departments.id))
     .where(whereClause)
     .orderBy(desc(schema.patrons.createdAt))
