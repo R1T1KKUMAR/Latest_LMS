@@ -19,6 +19,7 @@ import {
 import { db } from "@/db";
 import * as schema from "@/db/schema";
 import { requirePageAuth } from "@/lib/auth";
+import { formatDate, formatNumber } from "@/lib/utils";
 
 export const metadata = {
   title: "Staff Dashboard — RBMI LMS",
@@ -219,7 +220,7 @@ export default async function DashboardPage() {
             Catalog Titles
           </span>
           <div className="mt-2 text-2xl font-bold text-slate-900">
-            {totalTitles.toLocaleString()}
+            {formatNumber(totalTitles)}
           </div>
           <div className="mt-1 text-[11px] text-slate-400">Bibliographic records</div>
         </div>
@@ -229,7 +230,7 @@ export default async function DashboardPage() {
             Physical Copies
           </span>
           <div className="mt-2 text-2xl font-bold text-slate-900">
-            {totalCopies.toLocaleString()}
+            {formatNumber(totalCopies)}
           </div>
           <div className="mt-1 text-[11px] text-slate-400">Accessioned items</div>
         </div>
@@ -239,7 +240,7 @@ export default async function DashboardPage() {
             Active Patrons
           </span>
           <div className="mt-2 text-2xl font-bold text-slate-900">
-            {activePatrons.toLocaleString()}
+            {formatNumber(activePatrons)}
           </div>
           <div className="mt-1 text-[11px] text-emerald-600 font-medium">Verified accounts</div>
         </div>
@@ -249,7 +250,7 @@ export default async function DashboardPage() {
             Active Loans
           </span>
           <div className="mt-2 text-2xl font-bold text-blue-900">
-            {activeLoans.toLocaleString()}
+            {formatNumber(activeLoans)}
           </div>
           <div className="mt-1 text-[11px] text-blue-600">Items checked out</div>
         </div>
@@ -265,7 +266,7 @@ export default async function DashboardPage() {
           <div
             className={`mt-2 text-2xl font-bold ${overdueLoans > 0 ? "text-amber-900" : "text-slate-900"}`}
           >
-            {overdueLoans.toLocaleString()}
+            {formatNumber(overdueLoans)}
           </div>
           <div className="mt-1 text-[11px] text-amber-700">Past due date</div>
         </div>
@@ -351,8 +352,8 @@ export default async function DashboardPage() {
                   <TableCell className="font-mono text-xs text-slate-600">
                     {loan.accessionNo}
                   </TableCell>
-                  <TableCell className="text-xs text-slate-600">{String(loan.issueDate)}</TableCell>
-                  <TableCell className="text-xs text-slate-600">{String(loan.dueDate)}</TableCell>
+                  <TableCell className="text-xs text-slate-600">{formatDate(loan.issueDate)}</TableCell>
+                  <TableCell className="text-xs text-slate-600">{formatDate(loan.dueDate)}</TableCell>
                   <TableCell>
                     <span className="inline-flex rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-800 uppercase">
                       {loan.status}

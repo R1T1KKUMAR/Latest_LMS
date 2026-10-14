@@ -68,6 +68,7 @@ export default async function ReceiptPage({ params }: ReceiptPageProps) {
               {new Date(receipt.paymentDate).toLocaleString("en-IN", {
                 dateStyle: "medium",
                 timeStyle: "short",
+                timeZone: "Asia/Kolkata",
               })}
             </div>
           </div>

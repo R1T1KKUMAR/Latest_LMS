@@ -23,8 +23,8 @@ if (env.NODE_ENV !== "production") {
   globalForDb.conn = conn;
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: Dynamic database instance supporting PGlite test DB
-export let db: any = drizzle(conn, { schema });
+export const client = conn;
+export let db: ReturnType<typeof drizzle> = drizzle(conn, { schema });
 
 /**
  * Health check helper verifying connection pool availability

@@ -14,6 +14,7 @@ import {
   TableHeaderCell,
   TableRow,
 } from "@/components/ui/Table";
+import { formatDate } from "@/lib/utils";
 
 export interface CirculationItem {
   id: number;
@@ -958,11 +959,11 @@ export function CirculationDeskClient({
                         {item.accessionNo}
                       </TableCell>
                       <TableCell className="text-xs text-slate-600">
-                        {new Date(item.issueDate).toLocaleDateString()}
+                        {formatDate(item.issueDate)}
                       </TableCell>
                       <TableCell className="text-xs">
                         <span className={isOverdue ? "font-bold text-red-600" : "text-slate-600"}>
-                          {new Date(item.dueDate).toLocaleDateString()}
+                          {formatDate(item.dueDate)}
                           {isOverdue && " (Overdue)"}
                         </span>
                       </TableCell>

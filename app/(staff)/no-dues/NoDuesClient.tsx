@@ -15,6 +15,7 @@ import {
   TableHeaderCell,
   TableRow,
 } from "@/components/ui/Table";
+import { formatDate } from "@/lib/utils";
 import type { NoDuesEligibilityResult, RecentClearanceRecord } from "@/services/nodues";
 
 interface NoDuesClientProps {
@@ -437,7 +438,7 @@ export function NoDuesClient({ initialClearances, csrfToken }: NoDuesClientProps
                   </TableCell>
                   <TableCell className="text-xs text-slate-700">{c.issuedByName}</TableCell>
                   <TableCell className="text-xs text-slate-600">
-                    {new Date(c.issuedAt).toLocaleDateString()}
+                    {formatDate(c.issuedAt)}
                   </TableCell>
                   <TableCell>
                     <span className="inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800 uppercase">

@@ -16,6 +16,7 @@ import {
   TableHeaderCell,
   TableRow,
 } from "@/components/ui/Table";
+import { formatDate } from "@/lib/utils";
 import type { PatronAccountData } from "@/services/opac";
 
 interface AccountClientProps {
@@ -263,7 +264,7 @@ export function AccountClient({ accountData, csrfToken }: AccountClientProps) {
                 <span>
                   Card Expiry:{" "}
                   <strong className="text-slate-700">
-                    {new Date(profile.cardExpiry).toLocaleDateString()}
+                    {formatDate(profile.cardExpiry)}
                   </strong>
                 </span>
               </div>
@@ -388,17 +389,17 @@ export function AccountClient({ accountData, csrfToken }: AccountClientProps) {
                     </TableCell>
                     <TableCell className="text-xs text-slate-600">{loan.libraryName}</TableCell>
                     <TableCell className="text-xs text-slate-600">
-                      {new Date(loan.issueDate).toLocaleDateString()}
+                      {formatDate(loan.issueDate)}
                     </TableCell>
                     <TableCell className="text-xs">
                       {loan.isOverdue ? (
                         <span className="font-bold text-red-600">
-                          {new Date(loan.dueDate).toLocaleDateString()} ({loan.daysOverdue} days
+                          {formatDate(loan.dueDate)} ({loan.daysOverdue} days
                           overdue)
                         </span>
                       ) : (
                         <span className="text-slate-800">
-                          {new Date(loan.dueDate).toLocaleDateString()}{" "}
+                          {formatDate(loan.dueDate)}{" "}
                           <span className="text-slate-400">({loan.daysRemaining} days left)</span>
                         </span>
                       )}
@@ -457,13 +458,13 @@ export function AccountClient({ accountData, csrfToken }: AccountClientProps) {
                       {item.accessionNo}
                     </TableCell>
                     <TableCell className="text-xs text-slate-600">
-                      {new Date(item.issueDate).toLocaleDateString()}
+                      {formatDate(item.issueDate)}
                     </TableCell>
                     <TableCell className="text-xs text-slate-600">
-                      {new Date(item.dueDate).toLocaleDateString()}
+                      {formatDate(item.dueDate)}
                     </TableCell>
                     <TableCell className="text-xs text-slate-700">
-                      {item.returnDate ? new Date(item.returnDate).toLocaleDateString() : "—"}
+                      {item.returnDate ? formatDate(item.returnDate) : "—"}
                     </TableCell>
                     <TableCell>
                       <span
@@ -537,7 +538,7 @@ export function AccountClient({ accountData, csrfToken }: AccountClientProps) {
                       <span className="text-xs text-slate-500 block">{hold.authors}</span>
                     </TableCell>
                     <TableCell className="text-xs text-slate-600">
-                      {new Date(hold.requestDate).toLocaleDateString()}
+                      {formatDate(hold.requestDate)}
                     </TableCell>
                     <TableCell>
                       <span
@@ -554,7 +555,7 @@ export function AccountClient({ accountData, csrfToken }: AccountClientProps) {
                     </TableCell>
                     <TableCell className="text-xs text-slate-600">
                       {hold.pickupExpiryDate
-                        ? new Date(hold.pickupExpiryDate).toLocaleDateString()
+                        ? formatDate(hold.pickupExpiryDate)
                         : "Pending return"}
                     </TableCell>
                     <TableCell>
@@ -628,7 +629,7 @@ export function AccountClient({ accountData, csrfToken }: AccountClientProps) {
                     <TableRow key={fine.id}>
                       <TableCell className="font-semibold text-slate-900">{fine.reason}</TableCell>
                       <TableCell className="text-xs text-slate-600">
-                        {new Date(fine.createdAt).toLocaleDateString()}
+                        {formatDate(fine.createdAt)}
                       </TableCell>
                       <TableCell className="text-xs text-slate-800 font-mono">
                         ₹{fine.amount}

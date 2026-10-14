@@ -15,6 +15,7 @@ import {
   TableHeaderCell,
   TableRow,
 } from "@/components/ui/Table";
+import { formatDate } from "@/lib/utils";
 
 interface ReservationItem {
   id: number;
@@ -221,14 +222,12 @@ export function ReservationsClient({ initialReservations, csrfToken }: Reservati
                     {item.patronCard}
                   </TableCell>
                   <TableCell className="text-xs text-slate-600">
-                    {item.reservationDate
-                      ? new Date(item.reservationDate).toLocaleDateString()
-                      : "—"}
+                    {formatDate(item.reservationDate)}
                   </TableCell>
                   <TableCell className="text-xs text-slate-600">
                     {item.pickupExpiryDate ? (
                       <span className="font-semibold text-amber-700">
-                        {new Date(item.pickupExpiryDate).toLocaleDateString()}
+                        {formatDate(item.pickupExpiryDate)}
                       </span>
                     ) : item.status === "WAITING" ? (
                       <span className="text-slate-400 italic">Pending Return</span>

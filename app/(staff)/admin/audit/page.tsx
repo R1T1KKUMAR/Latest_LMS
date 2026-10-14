@@ -5,6 +5,7 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { db } from "@/db";
 import * as schema from "@/db/schema";
 import { requirePageAuth } from "@/lib/auth";
+import { formatDateTime } from "@/lib/utils";
 
 export const metadata = {
   title: "Security & Audit Trail — RBMI LMS",
@@ -73,7 +74,7 @@ export default async function AdminAuditPage() {
               {logs.map((log) => (
                 <tr key={log.id} className="hover:bg-slate-50/50">
                   <td className="px-6 py-3.5 font-mono text-xs text-slate-500">
-                    {new Date(log.createdAt).toLocaleString()}
+                    {formatDateTime(log.createdAt)}
                   </td>
                   <td className="px-6 py-3.5">
                     <div className="font-medium text-slate-800">{log.actorName}</div>

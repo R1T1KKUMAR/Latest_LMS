@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { StaffUserListItem } from "@/services/user";
+import { formatDateTime } from "@/lib/utils";
 import { ALL_PERMISSIONS, ALL_ROLES, ROLE_PERMISSIONS_MATRIX, type RoleCode } from "@/types/auth";
 
 interface RoleOption {
@@ -302,7 +303,7 @@ export function StaffUserManagementClient({
                       </span>
                     </td>
                     <td className="px-4 py-3 text-xs text-slate-500">
-                      {user.lastLogin ? new Date(user.lastLogin).toLocaleString() : "Never"}
+                      {user.lastLogin ? formatDateTime(user.lastLogin) : "Never"}
                     </td>
                     <td className="px-4 py-3 text-right space-x-2">
                       <button

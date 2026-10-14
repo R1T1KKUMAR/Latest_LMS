@@ -22,6 +22,7 @@ import {
   TableRow,
 } from "@/components/ui/Table";
 import { generateCode128Svg } from "@/lib/barcode";
+import { formatDate } from "@/lib/utils";
 import {
   PATRON_STATUSES,
   PATRON_TYPES,
@@ -1234,7 +1235,7 @@ export function PatronsClient({
                 <div>
                   <span className="text-slate-500">Card Validity Expiry:</span>{" "}
                   <strong className="text-slate-800">
-                    {new Date(profileDetail.patron.cardExpiry).toLocaleDateString()}
+                    {formatDate(profileDetail.patron.cardExpiry)}
                   </strong>
                 </div>
                 <div>
