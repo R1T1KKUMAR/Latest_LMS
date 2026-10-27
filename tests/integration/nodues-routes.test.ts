@@ -82,7 +82,6 @@ describe("Phase 11: No-Dues API Route Handlers Suite (Auth, RBAC, CSRF, Liabilit
       .insert(schema.patrons)
       .values({
         cardNo: "CLEAN-STUDENT-01",
-        rollNo: "ROLL-CLEAN-01",
         patronType: "STUDENT",
         categoryId: 1,
         institutionId: 1,

@@ -93,6 +93,7 @@ export const loans = pgTable(
     index("idx_loans_item_id").on(table.itemId),
     index("idx_loans_patron_id").on(table.patronId),
     index("idx_loans_status_due_date").on(table.status, table.dueDate),
+    index("idx_loans_issue_date").on(table.issueDate),
   ],
 );
 
@@ -160,6 +161,8 @@ export const fines = pgTable(
     check("chk_fine_status", sql`${table.status} IN ('OUTSTANDING', 'PAID', 'WAIVED')`),
     index("idx_fines_patron_status").on(table.patronId, table.status),
     index("idx_fines_loan_id").on(table.loanId),
+    index("idx_fines_status").on(table.status),
+    index("idx_fines_created_at").on(table.createdAt),
   ],
 );
 

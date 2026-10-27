@@ -125,7 +125,9 @@ describe("Admin Holiday Calendar & Dynamic Fine Adjustment API Routes", () => {
       const res = await holidaysTemplateGet();
       expect(res.status).toBe(200);
       expect(res.headers.get("content-type")).toContain("text/csv");
-      expect(res.headers.get("content-disposition")).toContain("annual_holiday_calendar_template.csv");
+      expect(res.headers.get("content-disposition")).toContain(
+        "annual_holiday_calendar_template.csv",
+      );
       const text = await res.text();
       expect(text).toContain("Republic Day");
       expect(text).toContain("Mahatma Gandhi Jayanti");

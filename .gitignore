@@ -27,6 +27,7 @@ test-results/
 .DS_Store
 Thumbs.db
 *.log
+WhatsApp Image*
 
 # Binary documents
 docs/*.pdf

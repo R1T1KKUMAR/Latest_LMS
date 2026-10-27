@@ -7,7 +7,8 @@ import { requirePageAuth } from "@/lib/auth";
 
 export const metadata = {
   title: "Master Data Management — RBMI LMS",
-  description: "View educational institutions, libraries, academic departments, courses, and vendors",
+  description:
+    "View educational institutions, libraries, academic departments, courses, and vendors",
 };
 
 export default async function AdminMastersPage() {
@@ -25,7 +26,7 @@ export default async function AdminMastersPage() {
     );
   }
 
-  const [institutions, libraries, departments, courses, categories, itemTypes, vendors] =
+  const [institutions, libraries, departments, _courses, categories, itemTypes, vendors] =
     await Promise.all([
       db.select().from(schema.institutions),
       db.select().from(schema.libraries),
@@ -164,7 +165,9 @@ export default async function AdminMastersPage() {
             {vendors.map((v) => (
               <div key={v.id} className="text-xs">
                 <div className="font-medium text-slate-800">{v.name}</div>
-                <div className="text-slate-400">{v.contactPerson} ({v.phone})</div>
+                <div className="text-slate-400">
+                  {v.contactPerson} ({v.phone})
+                </div>
               </div>
             ))}
           </div>

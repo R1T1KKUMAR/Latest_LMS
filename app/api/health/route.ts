@@ -1,9 +1,13 @@
 import { NextResponse } from "next/server";
 import { env } from "@/config/env";
+import { checkDatabaseConnection } from "@/db/client";
 
 export async function GET() {
+  const dbCheck = await checkDatabaseConnection();
+  const isHealthy = dbCheck.connected;
+
   const healthData = {
-    status: "ok",
+    status: isHealthy ? "ok" : "degraded",
     application: "rbmi-lms",
     version: "1.0.0",
     timestamp: new Date().toISOString(),
@@ -12,9 +16,9 @@ export async function GET() {
     checks: {
       application: "healthy",
       nodeVersion: process.version,
-      database: await (await import("@/db/client")).checkDatabaseConnection(),
+      database: dbCheck,
     },
   };
 
-  return NextResponse.json(healthData, { status: 200 });
+  return NextResponse.json(healthData, { status: isHealthy ? 200 : 503 });
 }

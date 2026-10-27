@@ -145,6 +145,12 @@ export async function invalidateAllUserSessions(
   userId: number,
   db: DbInstance = defaultDb,
 ): Promise<void> {
+  for (const [sid, entry] of sessionCache.entries()) {
+    if (entry.session.userType === userType && entry.session.userId === userId) {
+      sessionCache.delete(sid);
+    }
+  }
+
   await db
     .delete(schema.sessions)
     .where(and(eq(schema.sessions.userType, userType), eq(schema.sessions.userId, userId)));

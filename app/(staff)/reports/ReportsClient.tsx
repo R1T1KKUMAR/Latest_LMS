@@ -5,6 +5,7 @@ import { Alert } from "@/components/ui/Alert";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
+import { ReportViewerModal } from "./ReportViewerModal";
 
 interface ReportDef {
   id: string;
@@ -39,7 +40,7 @@ const allReports: ReportDef[] = [
     code: "RPT-03",
     name: "Overdue Items & Defaulters",
     description:
-      "List of active loans past due date, patron contact information, days overdue, and accrued penalties.",
+      "List of active book issues past due date, patron contact information, days overdue, and accrued penalties.",
     category: "Circulation",
     icon: "⚠️",
   },
@@ -136,10 +137,12 @@ const allReports: ReportDef[] = [
 export function ReportsClient() {
   const [selectedCategory, setSelectedCategory] = useState<string>("ALL");
   const [activeReport, setActiveReport] = useState<ReportDef | null>(null);
+  const [viewingReport, setViewingReport] = useState<ReportDef | null>(null);
   const [startDate, setStartDate] = useState("2026-01-01");
   const [endDate, setEndDate] = useState("2026-12-31");
   const [exportFormat, setExportFormat] = useState("CSV");
   const [reportFeedback, setReportFeedback] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   const categories = ["ALL", "Circulation", "Inventory", "Financial", "Analytics", "Compliance"];
 
@@ -147,21 +150,72 @@ export function ReportsClient() {
     (r) => selectedCategory === "ALL" || r.category === selectedCategory,
   );
 
-  const handleGenerate = (e: React.FormEvent) => {
+  const handleGenerate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeReport) return;
-    setReportFeedback(
-      `Report "${activeReport.name} (${activeReport.code})" generated successfully in ${exportFormat} format. (Full data streaming & PDF export active in Phase 11).`,
-    );
-    setActiveReport(null);
+
+    setExporting(true);
+    try {
+      const params = new URLSearchParams({
+        reportId: activeReport.id,
+        startDate,
+        endDate,
+      });
+
+      const res = await fetch(`/api/reports/query?${params.toString()}`);
+      const json = await res.json();
+
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || "Failed to query report data for export");
+      }
+
+      const reportData = json.report;
+      const headers = reportData.columns
+        .map((c: { label: string }) => `"${c.label.replace(/"/g, '""')}"`)
+        .join(",");
+      const rows = reportData.rows.map((row: Record<string, unknown>) =>
+        reportData.columns
+          .map((c: { key: string }) => {
+            const val = row[c.key] ?? "";
+            return `"${String(val).replace(/"/g, '""')}"`;
+          })
+          .join(","),
+      );
+
+      // UTF-8 BOM encoding per SRS FR-RP-02
+      const csvContent = `\uFEFF${[headers, ...rows].join("\r\n")}`;
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      const dateStr = new Date().toISOString().split("T")[0];
+      const safeName = activeReport.name.toLowerCase().replace(/[^a-z0-9]/g, "_");
+      anchor.download = `${activeReport.code}_${safeName}_${dateStr}.csv`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+      setReportFeedback(
+        `Report "${activeReport.name} (${activeReport.code})" generated and downloaded successfully as CSV with UTF-8 encoding (${reportData.totalRecords} records).`,
+      );
+      setActiveReport(null);
+    } catch (err: unknown) {
+      setReportFeedback(
+        `Error generating export: ${err instanceof Error ? err.message : "Server error"}`,
+      );
+    } finally {
+      setExporting(false);
+    }
   };
 
   return (
     <div className="space-y-6">
       {reportFeedback && (
         <Alert
-          variant="success"
-          title="Report Generation Triggered"
+          variant={reportFeedback.startsWith("Error") ? "error" : "success"}
+          title={reportFeedback.startsWith("Error") ? "Export Failed" : "Report Exported"}
           onDismiss={() => setReportFeedback(null)}
         >
           {reportFeedback}
@@ -175,7 +229,7 @@ export function ReportsClient() {
             key={cat}
             type="button"
             onClick={() => setSelectedCategory(cat)}
-            className={`rounded-lg px-3.5 py-1.5 text-xs font-semibold transition ${
+            className={`rounded-lg px-3.5 py-1.5 text-xs font-semibold transition cursor-pointer ${
               selectedCategory === cat
                 ? "bg-blue-900 text-white shadow-xs"
                 : "bg-white text-slate-600 hover:bg-slate-100 border border-slate-200"
@@ -204,26 +258,53 @@ export function ReportsClient() {
               <p className="mt-1 text-xs text-slate-500 leading-relaxed">{report.description}</p>
             </div>
 
-            <div className="mt-5 border-t border-slate-100 pt-3 flex items-center justify-between">
-              <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-700">
+            <div className="mt-5 border-t border-slate-100 pt-3 flex items-center justify-between gap-2">
+              <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-700 shrink-0">
                 {report.category}
               </span>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setActiveReport(report);
-                  setReportFeedback(null);
-                }}
-              >
-                Configure &amp; Export
-              </Button>
+              <div className="flex items-center gap-1.5">
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => setViewingReport(report)}
+                  className="inline-flex items-center gap-1 text-xs shadow-xs"
+                >
+                  <span>👁️</span>
+                  <span>View Report</span>
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setActiveReport(report);
+                    setReportFeedback(null);
+                  }}
+                  className="text-xs text-slate-700 hover:bg-slate-50"
+                >
+                  Export
+                </Button>
+              </div>
             </div>
           </div>
         ))}
       </div>
 
-      {/* Report Configuration Modal Form */}
+      {/* Live Online Report Viewer Modal */}
+      {viewingReport && (
+        <ReportViewerModal
+          reportId={viewingReport.id}
+          reportCode={viewingReport.code}
+          reportName={viewingReport.name}
+          reportDescription={viewingReport.description}
+          reportCategory={viewingReport.category}
+          reportIcon={viewingReport.icon}
+          initialStartDate={startDate}
+          initialEndDate={endDate}
+          onClose={() => setViewingReport(null)}
+        />
+      )}
+
+      {/* Report Configuration & Export Modal Form */}
       {activeReport && (
         <div
           role="dialog"
@@ -244,7 +325,7 @@ export function ReportsClient() {
               <button
                 type="button"
                 onClick={() => setActiveReport(null)}
-                className="text-slate-400 hover:text-slate-600 text-sm font-bold"
+                className="text-slate-400 hover:text-slate-600 text-sm font-bold cursor-pointer"
               >
                 ✕
               </button>
@@ -276,19 +357,34 @@ export function ReportsClient() {
                 value={exportFormat}
                 onChange={(e) => setExportFormat(e.target.value)}
                 options={[
-                  { value: "CSV", label: "CSV (Comma Separated Values)" },
-                  { value: "PDF", label: "PDF Document (Print Ready)" },
-                  { value: "EXCEL", label: "Microsoft Excel (.xlsx)" },
+                  { value: "CSV", label: "CSV (Comma Separated Values - UTF-8 BOM)" },
+                  { value: "EXCEL", label: "Microsoft Excel compatible" },
                 ]}
               />
 
-              <div className="mt-6 flex justify-end space-x-3 border-t border-slate-100 pt-4">
-                <Button type="button" variant="outline" onClick={() => setActiveReport(null)}>
-                  Cancel
+              <div className="mt-6 flex items-center justify-between border-t border-slate-100 pt-4">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    const rep = activeReport;
+                    setActiveReport(null);
+                    setViewingReport(rep);
+                  }}
+                  className="inline-flex items-center gap-1.5 text-xs text-blue-900 border-blue-200 hover:bg-blue-50"
+                >
+                  <span>👁️</span>
+                  <span>View on Screen</span>
                 </Button>
-                <Button type="submit" variant="primary">
-                  Generate &amp; Download
-                </Button>
+
+                <div className="flex items-center space-x-2">
+                  <Button type="button" variant="outline" onClick={() => setActiveReport(null)}>
+                    Cancel
+                  </Button>
+                  <Button type="submit" variant="primary" disabled={exporting}>
+                    {exporting ? "Generating..." : "Generate & Download"}
+                  </Button>
+                </div>
               </div>
             </form>
           </div>

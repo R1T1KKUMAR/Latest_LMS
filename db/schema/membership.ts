@@ -11,7 +11,7 @@ import {
   timestamp,
   varchar,
 } from "drizzle-orm/pg-core";
-import { courses, departments, institutions, patronCategories } from "./master";
+import { courses, departments, institutions, libraries, patronCategories } from "./master";
 
 // Sequence 1: seq_card_no (Section 6.1, FR-PA-02)
 export const seqCardNo = pgSequence("seq_card_no", {
@@ -29,6 +29,9 @@ export const patrons = pgTable(
     categoryId: integer("category_id")
       .notNull()
       .references(() => patronCategories.id, { onDelete: "restrict" }),
+    libraryId: integer("library_id").references(() => libraries.id, {
+      onDelete: "restrict",
+    }),
     institutionId: integer("institution_id").references(() => institutions.id, {
       onDelete: "restrict",
     }),
@@ -38,7 +41,6 @@ export const patrons = pgTable(
     courseId: integer("course_id").references(() => courses.id, {
       onDelete: "restrict",
     }),
-    rollNo: varchar("roll_no", { length: 50 }).unique(),
     employeeId: varchar("employee_id", { length: 50 }).unique(),
     firstName: varchar("first_name", { length: 60 }).notNull(),
     middleName: varchar("middle_name", { length: 60 }),
@@ -59,6 +61,7 @@ export const patrons = pgTable(
     username: varchar("username", { length: 50 }).notNull().unique(),
     passwordHash: varchar("password_hash", { length: 255 }).notNull(),
     mustChangePassword: boolean("must_change_password").notNull().default(true),
+    importBatchId: integer("import_batch_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -73,7 +76,8 @@ export const patrons = pgTable(
     ),
     index("idx_patrons_status").on(table.status),
     index("idx_patrons_card_no").on(table.cardNo),
-    index("idx_patrons_roll_no").on(table.rollNo),
+    index("idx_patrons_library_id").on(table.libraryId),
     index("idx_patrons_employee_id").on(table.employeeId),
+    index("idx_patrons_import_batch_id").on(table.importBatchId),
   ],
 );

@@ -65,7 +65,6 @@ describe("Phase 11: No-Dues Clearance Integration Suite (FR-ND-01, FR-ND-02, UC-
       .insert(schema.patrons)
       .values({
         cardNo: "TEST-FINE-ONLY",
-        rollNo: "ROLL-FINE-ONLY",
         patronType: "STUDENT",
         categoryId: 1,
         institutionId: 1,
@@ -202,7 +201,6 @@ describe("Phase 11: No-Dues Clearance Integration Suite (FR-ND-01, FR-ND-02, UC-
       .insert(schema.patrons)
       .values({
         cardNo: "TEST-LEAVE-OPEN",
-        rollNo: "ROLL-LEAVE-OPEN",
         patronType: "STUDENT",
         categoryId: 1,
         institutionId: 1,

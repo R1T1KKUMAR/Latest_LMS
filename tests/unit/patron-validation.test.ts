@@ -28,28 +28,17 @@ describe("Unit: Patron Validation & Numbering (FR-PA-01, FR-PA-02, FR-PA-03)", (
     expect(expiry.toISOString().split("T")[0]).toBe("2028-06-30");
   });
 
-  it("validates student registration requiring roll number", () => {
+  it("validates student registration without requiring roll number", () => {
     const validStudent = {
       patronType: "STUDENT",
       categoryId: 1,
       firstName: "Rahul",
       lastName: "Sharma",
-      rollNo: "2301430100099",
       email: "rahul@example.com",
     };
     const parsed = registerPatronSchema.parse(validStudent);
     expect(parsed.firstName).toBe("Rahul");
-    expect(parsed.rollNo).toBe("2301430100099");
-  });
-
-  it("rejects student registration missing roll number", () => {
-    expect(() =>
-      registerPatronSchema.parse({
-        patronType: "STUDENT",
-        categoryId: 1,
-        firstName: "Rahul",
-      }),
-    ).toThrow("Roll number is required for students");
+    expect(parsed.patronType).toBe("STUDENT");
   });
 
   it("validates faculty registration without requiring roll number", () => {

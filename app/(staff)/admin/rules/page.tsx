@@ -1,13 +1,17 @@
 import Link from "next/link";
 import { ForbiddenCard } from "@/components/auth/ForbiddenCard";
 import { PageHeader } from "@/components/layout/PageHeader";
-import { db } from "@/db";
-import * as schema from "@/db/schema";
 import { requirePageAuth } from "@/lib/auth";
+import {
+  getCachedCirculationRules,
+  getCachedItemTypes,
+  getCachedLibraries,
+  getCachedPatronCategories,
+} from "@/lib/master-data-cache";
 
 export const metadata = {
   title: "Circulation Policy Rules — RBMI LMS",
-  description: "View circulation rules matrix for book loans, fine rates, and renewals",
+  description: "View circulation rules matrix for book issues, fine rates, and renewals",
 };
 
 export default async function AdminRulesPage() {
@@ -26,10 +30,10 @@ export default async function AdminRulesPage() {
   }
 
   const [rulesList, categories, itemTypes, libraries] = await Promise.all([
-    db.select().from(schema.circulationRules),
-    db.select().from(schema.patronCategories),
-    db.select().from(schema.itemTypes),
-    db.select().from(schema.libraries),
+    getCachedCirculationRules(),
+    getCachedPatronCategories(),
+    getCachedItemTypes(),
+    getCachedLibraries(),
   ]);
 
   const catMap = new Map(categories.map((c) => [c.id, c.name]));
@@ -40,7 +44,7 @@ export default async function AdminRulesPage() {
     <div className="container mx-auto space-y-6 px-4 py-8">
       <PageHeader
         title="Circulation Policy Rules"
-        description="Active loan policies, renewal limits, fine calculations, and hold eligibility matrix."
+        description="Active book issue policies, renewal limits, fine calculations, and hold eligibility matrix."
         actions={
           <Link
             href="/admin"
@@ -70,7 +74,7 @@ export default async function AdminRulesPage() {
                 <th className="px-6 py-3">Patron Category</th>
                 <th className="px-6 py-3">Item Type</th>
                 <th className="px-6 py-3 text-center">Max Books</th>
-                <th className="px-6 py-3 text-center">Loan Days</th>
+                <th className="px-6 py-3 text-center">Issue Duration</th>
                 <th className="px-6 py-3 text-center">Renewals</th>
                 <th className="px-6 py-3 text-right">Fine/Day</th>
                 <th className="px-6 py-3 text-right">Max Fine</th>
@@ -82,7 +86,9 @@ export default async function AdminRulesPage() {
                 <tr key={r.id} className="hover:bg-slate-50/50">
                   <td className="px-6 py-3.5 font-mono text-xs text-slate-500">#{r.id}</td>
                   <td className="px-6 py-3.5 font-medium text-slate-800">
-                    {r.libraryId ? libMap.get(r.libraryId) ?? `Branch #${r.libraryId}` : "All Branches"}
+                    {r.libraryId
+                      ? (libMap.get(r.libraryId) ?? `Branch #${r.libraryId}`)
+                      : "All Branches"}
                   </td>
                   <td className="px-6 py-3.5">
                     {r.categoryId ? (
@@ -105,12 +111,8 @@ export default async function AdminRulesPage() {
                   <td className="px-6 py-3.5 text-center font-semibold text-slate-800">
                     {r.maxBooks}
                   </td>
-                  <td className="px-6 py-3.5 text-center text-slate-700">
-                    {r.loanDays} days
-                  </td>
-                  <td className="px-6 py-3.5 text-center text-slate-700">
-                    {r.maxRenewals}
-                  </td>
+                  <td className="px-6 py-3.5 text-center text-slate-700">{r.loanDays} days</td>
+                  <td className="px-6 py-3.5 text-center text-slate-700">{r.maxRenewals}</td>
                   <td className="px-6 py-3.5 text-right font-medium text-amber-700">
                     ₹{r.finePerDay}
                   </td>

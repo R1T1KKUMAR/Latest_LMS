@@ -58,6 +58,7 @@ export const users = pgTable("users", {
     .notNull()
     .references(() => libraries.id, { onDelete: "restrict" }),
   isActive: boolean("is_active").notNull().default(true),
+  isAvailable: boolean("is_available").notNull().default(true),
   lastLogin: timestamp("last_login", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -80,6 +81,7 @@ export const auditLogs = pgTable(
   },
   (table) => [
     check("chk_actor_type", sql`${table.actorType} IN ('STAFF', 'PATRON', 'SYSTEM', 'ANONYMOUS')`),
+    index("idx_audit_logs_created_at").on(table.createdAt),
   ],
 );
 

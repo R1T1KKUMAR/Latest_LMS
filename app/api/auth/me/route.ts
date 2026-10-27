@@ -26,10 +26,10 @@ export async function GET() {
         patron: {
           id: authContext.patron.id,
           cardNo: authContext.patron.cardNo,
-          rollNo: authContext.patron.rollNo,
           employeeId: authContext.patron.employeeId,
           name: `${authContext.patron.firstName} ${authContext.patron.lastName ?? ""}`.trim(),
           patronType: authContext.patron.patronType,
+          libraryId: authContext.patron.libraryId,
           mustChangePassword: authContext.patron.mustChangePassword,
         },
         csrfToken: authContext.session.csrfToken,

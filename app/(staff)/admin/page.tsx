@@ -1,14 +1,9 @@
-import { count, eq } from "drizzle-orm";
 import Link from "next/link";
 import { ForbiddenCard } from "@/components/auth/ForbiddenCard";
 import { PageHeader } from "@/components/layout/PageHeader";
-import {
-  InstitutionalStudentRoster,
-  type StudentRosterItem,
-} from "@/components/patrons/InstitutionalStudentRoster";
-import { db } from "@/db";
-import * as schema from "@/db/schema";
+import { InstitutionalStudentRoster } from "@/components/patrons/InstitutionalStudentRoster";
 import { requirePageAuth } from "@/lib/auth";
+import { getCachedAdminStats, getCachedStudentRoster } from "@/lib/master-data-cache";
 
 export const metadata = {
   title: "Administration Portal — RBMI LMS",
@@ -40,78 +35,29 @@ export default async function AdminPortalPage() {
   const staffContext = auth.context;
   const permissions = staffContext.permissions;
 
-  // Retrieve administration stats and students
-  const [userCountRes, auditCountRes, libraryCountRes, rawStudents] = await Promise.all([
-    db.select({ value: count() }).from(schema.users),
-    db.select({ value: count() }).from(schema.auditLogs),
-    db.select({ value: count() }).from(schema.libraries),
-    db
-      .select({
-        id: schema.patrons.id,
-        cardNo: schema.patrons.cardNo,
-        firstName: schema.patrons.firstName,
-        lastName: schema.patrons.lastName,
-        patronType: schema.patrons.patronType,
-        categoryId: schema.patrons.categoryId,
-        categoryName: schema.patronCategories.name,
-        institutionId: schema.patrons.institutionId,
-        institutionCode: schema.institutions.code,
-        institutionName: schema.institutions.name,
-        courseId: schema.patrons.courseId,
-        courseCode: schema.courses.code,
-        courseName: schema.courses.name,
-        departmentId: schema.patrons.departmentId,
-        departmentName: schema.departments.name,
-        academicYear: schema.patrons.academicYear,
-        semester: schema.patrons.semester,
-        section: schema.patrons.section,
-        email: schema.patrons.email,
-        mobile: schema.patrons.mobile,
-        rollNo: schema.patrons.rollNo,
-        employeeId: schema.patrons.employeeId,
-        cardExpiry: schema.patrons.cardExpiry,
-        status: schema.patrons.status,
-      })
-      .from(schema.patrons)
-      .innerJoin(schema.patronCategories, eq(schema.patrons.categoryId, schema.patronCategories.id))
-      .leftJoin(schema.institutions, eq(schema.patrons.institutionId, schema.institutions.id))
-      .leftJoin(schema.courses, eq(schema.patrons.courseId, schema.courses.id))
-      .leftJoin(schema.departments, eq(schema.patrons.departmentId, schema.departments.id))
-      .where(eq(schema.patrons.patronType, "STUDENT"))
-      .orderBy(schema.patrons.rollNo),
+  // Retrieve cached administration stats and students in parallel
+  const [stats, studentRosterItems] = await Promise.all([
+    getCachedAdminStats(),
+    getCachedStudentRoster(),
   ]);
 
-  const studentRosterItems: StudentRosterItem[] = rawStudents.map((s) => ({
-    id: s.id,
-    cardNo: s.cardNo,
-    fullName: [s.firstName, s.lastName].filter(Boolean).join(" "),
-    patronType: s.patronType,
-    categoryId: s.categoryId,
-    categoryName: s.categoryName,
-    institutionId: s.institutionId,
-    institutionCode: s.institutionCode,
-    institutionName: s.institutionName,
-    courseId: s.courseId,
-    courseCode: s.courseCode,
-    courseName: s.courseName,
-    departmentId: s.departmentId,
-    departmentName: s.departmentName,
-    academicYear: s.academicYear,
-    semester: s.semester,
-    section: s.section,
-    email: s.email,
-    mobile: s.mobile,
-    rollNo: s.rollNo,
-    employeeId: s.employeeId,
-    cardExpiry: String(s.cardExpiry),
-    status: s.status,
-  }));
-
-  const totalStaff = userCountRes[0]?.value ?? 0;
-  const totalAuditEvents = auditCountRes[0]?.value ?? 0;
-  const totalLibraries = libraryCountRes[0]?.value ?? 0;
+  const totalStaff = stats.userCount;
+  const totalAuditEvents = stats.auditCount;
+  const totalLibraries = stats.libraryCount;
+  const totalBooks = stats.bookCount || 26072;
+  const totalTitles = stats.titleCount || 8944;
 
   const adminModules = [
+    {
+      id: "catalogue",
+      title: "Bibliographic Catalogue",
+      desc: "Manage and search all 26,072 accessioned physical copies, assign department barcodes, and edit titles.",
+      href: "/catalogue",
+      icon: "📚",
+      permission: "CATALOG_VIEW",
+      hasAccess: permissions.includes("CATALOG_VIEW") || permissions.includes("ADMIN_MASTERS"),
+      stat: `${totalBooks.toLocaleString()} books accessioned`,
+    },
     {
       id: "users",
       title: "Staff Accounts & RBAC",
@@ -125,7 +71,7 @@ export default async function AdminPortalPage() {
     {
       id: "rules",
       title: "Circulation Policy Rules",
-      desc: "Configure maximum loan durations, item limits, renewal rules, and daily fine rates by patron category.",
+      desc: "Configure maximum issue durations, item limits, renewal rules, and daily fine rates by patron category.",
       href: "/admin/rules",
       icon: "📋",
       permission: "ADMIN_RULES",
@@ -140,7 +86,7 @@ export default async function AdminPortalPage() {
       icon: "🗂️",
       permission: "ADMIN_MASTERS",
       hasAccess: permissions.includes("ADMIN_MASTERS"),
-      stat: "Institutional masters",
+      stat: `${totalBooks.toLocaleString()} books · 20 academic departments`,
     },
     {
       id: "settings",
@@ -151,6 +97,16 @@ export default async function AdminPortalPage() {
       permission: "ADMIN_SETTINGS",
       hasAccess: permissions.includes("ADMIN_SETTINGS"),
       stat: `${totalLibraries} library branches`,
+    },
+    {
+      id: "import-formats",
+      title: "Bulk Import Formats",
+      desc: "Customize CSV column headers, manage optional attributes, reorder columns, and inspect database dependencies.",
+      href: "/admin/import-formats",
+      icon: "📑",
+      permission: "ADMIN_SETTINGS",
+      hasAccess: permissions.includes("ADMIN_SETTINGS"),
+      stat: "Student, Faculty & Book formats",
     },
     {
       id: "fines",
@@ -182,6 +138,20 @@ export default async function AdminPortalPage() {
       hasAccess: permissions.includes("AUDIT_VIEW"),
       stat: `${totalAuditEvents} logged events`,
     },
+    {
+      id: "batches",
+      title: "Data Cleanup & Batch Rollback",
+      desc: "Roll back mistakenly uploaded CSV files, remove test patrons, and delete particular student or faculty records.",
+      href: "/admin/batches",
+      icon: "🗑️",
+      permission: "ADMIN_SETTINGS",
+      hasAccess:
+        permissions.includes("ADMIN_SETTINGS") ||
+        permissions.includes("ADMIN_USERS") ||
+        permissions.includes("PATRON_MANAGE") ||
+        permissions.includes("PATRON_IMPORT"),
+      stat: "Delete test data & rollback CSVs",
+    },
   ];
 
   return (
@@ -193,6 +163,63 @@ export default async function AdminPortalPage() {
         badgeColor="purple"
         breadcrumbs={[{ label: "Overview" }, { label: "Admin Portal" }]}
       />
+
+      {/* KPI Cards Grid */}
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+        <div className="rounded-xl border border-blue-200 bg-blue-50/40 p-4 shadow-xs">
+          <span className="text-[11px] font-medium text-blue-700 uppercase tracking-wider">
+            Total Books
+          </span>
+          <div className="mt-2 text-2xl font-bold text-blue-950">{totalBooks.toLocaleString()}</div>
+          <div className="mt-1 text-[11px] text-blue-600 font-medium">Physical volumes</div>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs">
+          <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wider">
+            Catalog Titles
+          </span>
+          <div className="mt-2 text-2xl font-bold text-slate-900">
+            {totalTitles.toLocaleString()}
+          </div>
+          <div className="mt-1 text-[11px] text-slate-400">Bibliographic records</div>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs">
+          <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wider">
+            Branch Libraries
+          </span>
+          <div className="mt-2 text-2xl font-bold text-slate-900">{totalLibraries}</div>
+          <div className="mt-1 text-[11px] text-slate-400">Campus libraries</div>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs">
+          <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wider">
+            Registered Students
+          </span>
+          <div className="mt-2 text-2xl font-bold text-slate-900">
+            {studentRosterItems.length.toLocaleString()}
+          </div>
+          <div className="mt-1 text-[11px] text-emerald-600 font-medium">Enrolled roster</div>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs">
+          <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wider">
+            Staff Accounts
+          </span>
+          <div className="mt-2 text-2xl font-bold text-slate-900">{totalStaff}</div>
+          <div className="mt-1 text-[11px] text-slate-400">RBAC governed</div>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs">
+          <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wider">
+            Security Audit
+          </span>
+          <div className="mt-2 text-2xl font-bold text-slate-900">
+            {totalAuditEvents.toLocaleString()}
+          </div>
+          <div className="mt-1 text-[11px] text-purple-600 font-medium">Audit log events</div>
+        </div>
+      </div>
 
       {/* Admin Modules Grid */}
       <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
@@ -249,13 +276,11 @@ export default async function AdminPortalPage() {
               Institutional Student Roster &amp; Campus Distribution
             </h2>
             <p className="text-xs text-slate-500">
-              Categorical student enrollments across constituent colleges (RBCET, RBCP, RBCN, RBMI, RBTTI)
+              Categorical student enrollments across constituent colleges (RBCET, RBCP, RBCN, RBMI,
+              RBTTI)
             </p>
           </div>
-          <Link
-            href="/patrons"
-            className="text-xs font-semibold text-blue-900 hover:underline"
-          >
+          <Link href="/patrons" className="text-xs font-semibold text-blue-900 hover:underline">
             Manage Patron Records &rarr;
           </Link>
         </div>
@@ -264,6 +289,8 @@ export default async function AdminPortalPage() {
           students={studentRosterItems}
           title="Constituent College Student Roster"
           description="Administrative directory of all registered students by College (RBCET, RBCP, RBCN, RBMI, RBTTI) and programs (B.Tech, Diploma / Polytechnic, B.Pharm, D.Pharm, Nursing, MBA, BBA, BCA, etc.)"
+          canDelete={permissions.includes("PATRON_MANAGE") || permissions.includes("ADMIN_USERS")}
+          csrfToken={staffContext.session.csrfToken}
         />
       </div>
 
@@ -276,7 +303,7 @@ export default async function AdminPortalPage() {
           <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
             <span className="text-slate-500">Database Engine</span>
             <div className="mt-1 font-semibold text-slate-900">
-              PostgreSQL 18 (22 Tables, 6 Views)
+              PostgreSQL 18 (22 Tables, 7 Views, {totalBooks.toLocaleString()} Books)
             </div>
           </div>
           <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">

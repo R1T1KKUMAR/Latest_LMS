@@ -6,6 +6,7 @@ import { drizzle } from "drizzle-orm/pglite";
 import { NextRequest } from "next/server";
 import { beforeAll, describe, expect, it } from "vitest";
 import { POST as adminRulesPost } from "@/app/api/admin/rules/route";
+import { DELETE as adminUserDelete } from "@/app/api/admin/users/[id]/route";
 import { GET as adminUsersGet, POST as adminUsersPost } from "@/app/api/admin/users/route";
 import { POST as markLostPost } from "@/app/api/circulation/mark-lost/route";
 import { POST as waiveFinePost } from "@/app/api/circulation/waive-fine/route";
@@ -173,6 +174,71 @@ describe("Phase 4: RBAC Route Handlers & Unauthorized Mutation Refusals (HTTP 40
       expect(json.success).toBe(true);
       expect(json.user.username).toBe("route_test_user");
     });
+
+    it("returns 403 Forbidden when Assistant Librarian attempts to delete a staff user", async () => {
+      const req = new NextRequest("http://localhost:3000/api/admin/users/4", {
+        method: "DELETE",
+        headers: {
+          cookie: `rbmi_staff_session=${asstLibrarianSessionId}`,
+          "x-csrf-token": asstLibrarianCsrf,
+        },
+      });
+
+      const res = await adminUserDelete(req, { params: Promise.resolve({ id: "4" }) });
+      expect(res.status).toBe(403);
+      const json = await res.json();
+      expect(json.success).toBe(false);
+      expect(json.error).toContain("ADMIN_USERS");
+    });
+
+    it("returns 403 Forbidden when Super Administrator attempts to delete with invalid CSRF token", async () => {
+      const req = new NextRequest("http://localhost:3000/api/admin/users/4", {
+        method: "DELETE",
+        headers: {
+          cookie: `rbmi_staff_session=${superAdminSessionId}`,
+          "x-csrf-token": "invalid_csrf_token_value",
+        },
+      });
+
+      const res = await adminUserDelete(req, { params: Promise.resolve({ id: "4" }) });
+      expect(res.status).toBe(403);
+      const json = await res.json();
+      expect(json.success).toBe(false);
+      expect(json.error).toContain("CSRF");
+    });
+
+    it("returns 200 OK when Super Administrator deletes an unused staff user", async () => {
+      const [testUser] = await db
+        .select()
+        .from(schema.users)
+        .where(eq(schema.users.username, "route_test_user"))
+        .limit(1);
+
+      expect(testUser).toBeDefined();
+
+      const req = new NextRequest(`http://localhost:3000/api/admin/users/${testUser.id}`, {
+        method: "DELETE",
+        headers: {
+          cookie: `rbmi_staff_session=${superAdminSessionId}`,
+          "x-csrf-token": superAdminCsrf,
+        },
+      });
+
+      const res = await adminUserDelete(req, {
+        params: Promise.resolve({ id: String(testUser.id) }),
+      });
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.success).toBe(true);
+      expect(json.message).toContain("deleted successfully");
+
+      const after = await db
+        .select()
+        .from(schema.users)
+        .where(eq(schema.users.id, testUser.id))
+        .limit(1);
+      expect(after.length).toBe(0);
+    });
   });
 
   describe("2. Fine Waiver & Lost Mutations (FINE_WAIVE & CIRC_LOST Guards)", () => {
@@ -219,7 +285,7 @@ describe("Phase 4: RBAC Route Handlers & Unauthorized Mutation Refusals (HTTP 40
           cookie: `rbmi_staff_session=${asstLibrarianSessionId}`,
           "x-csrf-token": asstLibrarianCsrf,
         },
-        body: JSON.stringify({ loanId: 102 }),
+        body: JSON.stringify({ loanId: 1 }),
       });
 
       const res = await markLostPost(req);
@@ -236,7 +302,7 @@ describe("Phase 4: RBAC Route Handlers & Unauthorized Mutation Refusals (HTTP 40
           cookie: `rbmi_staff_session=${librarianSessionId}`,
           "x-csrf-token": librarianCsrf,
         },
-        body: JSON.stringify({ loanId: 102 }),
+        body: JSON.stringify({ loanId: 1 }),
       });
 
       const res = await markLostPost(req);

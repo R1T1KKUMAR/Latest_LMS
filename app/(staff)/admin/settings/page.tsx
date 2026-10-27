@@ -7,7 +7,8 @@ import { requirePageAuth } from "@/lib/auth";
 
 export const metadata = {
   title: "System & Campus Settings — RBMI LMS",
-  description: "Configure institutional settings, defaults, fine thresholds, and session parameters",
+  description:
+    "Configure institutional settings, defaults, fine thresholds, and session parameters",
 };
 
 export default async function AdminSettingsPage() {
@@ -31,7 +32,7 @@ export default async function AdminSettingsPage() {
     <div className="container mx-auto space-y-6 px-4 py-8">
       <PageHeader
         title="System & Campus Settings"
-        description="Global system parameters, loan defaults, fine thresholds, and operational rules."
+        description="Global system parameters, issue defaults, fine thresholds, and operational rules."
         actions={
           <Link
             href="/admin"
@@ -48,7 +49,8 @@ export default async function AdminSettingsPage() {
             System Configuration Keys ({settingsList.length} Active Settings)
           </h2>
           <p className="mt-0.5 text-xs text-slate-500">
-            Settings take immediate effect across circulation calculations and reports without restart.
+            Settings take immediate effect across circulation calculations and reports without
+            restart.
           </p>
         </div>
 
@@ -72,9 +74,7 @@ export default async function AdminSettingsPage() {
                       {s.settingValue}
                     </span>
                   </td>
-                  <td className="px-6 py-3.5 text-xs text-slate-500">
-                    {s.description || "—"}
-                  </td>
+                  <td className="px-6 py-3.5 text-xs text-slate-500">{s.description || "—"}</td>
                 </tr>
               ))}
             </tbody>

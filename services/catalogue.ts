@@ -1,6 +1,7 @@
-import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { db as defaultDb } from "@/db";
 import * as schema from "@/db/schema";
+import { generateDepartmentBarcode } from "@/lib/department-barcodes";
 import { formatAccessionNumber, normalizeIsbn } from "@/lib/numbering";
 import {
   type AddCopiesInput,
@@ -229,6 +230,7 @@ export async function listBibRecords(
     search?: string;
     itemTypeId?: number;
     departmentId?: number;
+    institutionId?: number;
     libraryId?: number;
     page?: number;
     limit?: number;
@@ -252,6 +254,8 @@ export async function listBibRecords(
         ilike(schema.bibRecords.subject, term),
         ilike(schema.bibRecords.callNumber, term),
         ilike(schema.bibRecords.publisher, term),
+        ilike(schema.items.barcode, term),
+        ilike(schema.items.accessionNo, term),
       ),
     );
   }
@@ -264,12 +268,28 @@ export async function listBibRecords(
     conditions.push(eq(schema.bibRecords.departmentId, options.departmentId));
   }
 
+  if (options.institutionId) {
+    conditions.push(eq(schema.departments.institutionId, options.institutionId));
+  }
+
+  if (options.libraryId) {
+    conditions.push(eq(schema.items.libraryId, options.libraryId));
+  }
+
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
-  const [countRes] = await db
+  const countQuery = db
     .select({ total: sql<number>`count(distinct ${schema.bibRecords.id})::int` })
     .from(schema.bibRecords)
-    .where(whereClause);
+    .leftJoin(schema.departments, eq(schema.bibRecords.departmentId, schema.departments.id));
+
+  const shouldJoinItems = Boolean(options.search?.trim() || options.libraryId);
+
+  const [countRes] = shouldJoinItems
+    ? await countQuery
+        .leftJoin(schema.items, eq(schema.bibRecords.id, schema.items.bibId))
+        .where(whereClause)
+    : await countQuery.where(whereClause);
 
   const totalCount = countRes?.total ?? 0;
   const totalPages = Math.ceil(totalCount / limit);
@@ -286,15 +306,154 @@ export async function listBibRecords(
       callNumber: schema.bibRecords.callNumber,
       itemTypeId: schema.bibRecords.itemTypeId,
       itemTypeName: schema.itemTypes.name,
+      departmentId: schema.bibRecords.departmentId,
+      departmentName: schema.departments.name,
+      departmentCode: schema.departments.code,
+      institutionId: schema.departments.institutionId,
+      institutionCode: schema.institutions.code,
+      institutionName: schema.institutions.name,
+      barcode: sql<string | null>`max(${schema.items.barcode})`,
+      accessionNo: sql<string | null>`max(${schema.items.accessionNo})`,
+      copyId: sql<number | null>`max(${schema.items.id})`,
       totalCopies: sql<number>`count(${schema.items.id})::int`,
       availableCopies: sql<number>`count(case when ${schema.items.status} = 'AVAILABLE' then 1 end)::int`,
     })
     .from(schema.bibRecords)
     .innerJoin(schema.itemTypes, eq(schema.bibRecords.itemTypeId, schema.itemTypes.id))
+    .leftJoin(schema.departments, eq(schema.bibRecords.departmentId, schema.departments.id))
+    .leftJoin(schema.institutions, eq(schema.departments.institutionId, schema.institutions.id))
     .leftJoin(schema.items, eq(schema.bibRecords.id, schema.items.bibId))
     .where(whereClause)
-    .groupBy(schema.bibRecords.id, schema.itemTypes.name)
-    .orderBy(desc(schema.bibRecords.createdAt))
+    .groupBy(
+      schema.bibRecords.id,
+      schema.itemTypes.name,
+      schema.departments.name,
+      schema.departments.code,
+      schema.departments.institutionId,
+      schema.institutions.code,
+      schema.institutions.name,
+    )
+    .orderBy(schema.bibRecords.id)
+    .limit(limit)
+    .offset(offset);
+
+  return {
+    records,
+    pagination: {
+      page,
+      limit,
+      totalCount,
+      totalPages,
+    },
+  };
+}
+
+/**
+ * Searches and paginates individual book copies (all 26,072 physical volumes).
+ * Each row corresponds to a specific physical book copy in `items` with its unique barcode and accession number.
+ */
+export async function listIndividualCopies(
+  options: {
+    search?: string;
+    itemTypeId?: number;
+    departmentId?: number;
+    institutionId?: number;
+    libraryId?: number;
+    page?: number;
+    limit?: number;
+  } = {},
+  db: DbInstance = defaultDb,
+) {
+  const page = Math.max(1, options.page ?? 1);
+  const limit = Math.min(100, Math.max(1, options.limit ?? 50));
+  const offset = (page - 1) * limit;
+
+  const conditions = [];
+
+  if (options.search?.trim()) {
+    const term = `%${options.search.trim()}%`;
+    conditions.push(
+      or(
+        ilike(schema.items.barcode, term),
+        ilike(schema.items.accessionNo, term),
+        ilike(schema.bibRecords.title, term),
+        ilike(schema.bibRecords.subtitle, term),
+        ilike(schema.bibRecords.authors, term),
+        ilike(schema.bibRecords.isbn, term),
+        ilike(schema.bibRecords.callNumber, term),
+        ilike(schema.bibRecords.publisher, term),
+        ilike(schema.bibRecords.subject, term),
+      ),
+    );
+  }
+
+  if (options.itemTypeId) {
+    conditions.push(eq(schema.bibRecords.itemTypeId, options.itemTypeId));
+  }
+
+  if (options.departmentId) {
+    conditions.push(eq(schema.bibRecords.departmentId, options.departmentId));
+  }
+
+  if (options.institutionId) {
+    conditions.push(eq(schema.departments.institutionId, options.institutionId));
+  }
+
+  if (options.libraryId) {
+    conditions.push(eq(schema.items.libraryId, options.libraryId));
+  }
+
+  const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+  const countQuery = whereClause
+    ? db
+        .select({ total: sql<number>`count(${schema.items.id})::int` })
+        .from(schema.items)
+        .innerJoin(schema.bibRecords, eq(schema.items.bibId, schema.bibRecords.id))
+        .leftJoin(schema.departments, eq(schema.bibRecords.departmentId, schema.departments.id))
+        .where(whereClause)
+    : db.select({ total: sql<number>`count(*)::int` }).from(schema.items);
+
+  const [countRes] = await countQuery;
+  const totalCount = countRes?.total ?? 0;
+  const totalPages = Math.ceil(totalCount / limit);
+
+  const records = await db
+    .select({
+      id: schema.bibRecords.id,
+      copyId: schema.items.id,
+      title: schema.bibRecords.title,
+      subtitle: schema.bibRecords.subtitle,
+      authors: schema.bibRecords.authors,
+      isbn: schema.bibRecords.isbn,
+      edition: schema.bibRecords.edition,
+      pubYear: schema.bibRecords.pubYear,
+      callNumber: sql<
+        string | null
+      >`coalesce(${schema.items.callNumber}, ${schema.bibRecords.callNumber})`,
+      itemTypeId: schema.bibRecords.itemTypeId,
+      itemTypeName: schema.itemTypes.name,
+      departmentId: schema.bibRecords.departmentId,
+      departmentName: schema.departments.name,
+      departmentCode: schema.departments.code,
+      institutionId: schema.departments.institutionId,
+      institutionCode: schema.institutions.code,
+      institutionName: schema.institutions.name,
+      barcode: schema.items.barcode,
+      accessionNo: schema.items.accessionNo,
+      status: schema.items.status,
+      location: schema.items.location,
+      price: schema.items.price,
+      totalCopies: sql<number>`1`,
+      availableCopies: sql<number>`case when ${schema.items.status} = 'AVAILABLE' then 1 else 0 end`,
+    })
+    .from(schema.items)
+    .innerJoin(schema.bibRecords, eq(schema.items.bibId, schema.bibRecords.id))
+    .innerJoin(schema.itemTypes, eq(schema.bibRecords.itemTypeId, schema.itemTypes.id))
+    .leftJoin(schema.departments, eq(schema.bibRecords.departmentId, schema.departments.id))
+    .leftJoin(schema.institutions, eq(schema.departments.institutionId, schema.institutions.id))
+    .where(whereClause)
+    .orderBy(schema.items.id)
     .limit(limit)
     .offset(offset);
 
@@ -394,6 +553,10 @@ export async function addCopiesToTitle(
     }
 
     const rows = await tx.insert(schema.items).values(copiesToInsert).returning();
+    const libTable = schema.getLibraryItemsTable(parsed.libraryId);
+    for (const copy of copiesToInsert) {
+      await tx.insert(libTable).values(copy).onConflictDoNothing();
+    }
     return rows;
   });
 
@@ -493,4 +656,421 @@ export async function getItemCopyByAccession(accessionNo: string, db: DbInstance
     .limit(1);
 
   return copy || null;
+}
+
+/**
+ * Searches and paginates consolidated books grouped by Title and Author.
+ */
+export async function listConsolidatedBooks(
+  options: {
+    search?: string;
+    itemTypeId?: number;
+    departmentId?: number;
+    institutionId?: number;
+    libraryId?: number;
+    page?: number;
+    limit?: number;
+  } = {},
+  db: DbInstance = defaultDb,
+) {
+  const page = Math.max(1, options.page ?? 1);
+  const limit = Math.min(100, Math.max(1, options.limit ?? 50));
+  const offset = (page - 1) * limit;
+
+  const conditions = [];
+
+  if (options.search?.trim()) {
+    const term = `%${options.search.trim()}%`;
+    conditions.push(
+      or(
+        ilike(schema.bibRecords.title, term),
+        ilike(schema.bibRecords.authors, term),
+        ilike(schema.bibRecords.isbn, term),
+        ilike(schema.items.barcode, term),
+        ilike(schema.items.accessionNo, term),
+      ),
+    );
+  }
+
+  if (options.itemTypeId) {
+    conditions.push(eq(schema.bibRecords.itemTypeId, options.itemTypeId));
+  }
+
+  if (options.departmentId) {
+    conditions.push(eq(schema.bibRecords.departmentId, options.departmentId));
+  }
+
+  if (options.institutionId) {
+    conditions.push(eq(schema.departments.institutionId, options.institutionId));
+  }
+
+  if (options.libraryId) {
+    conditions.push(eq(schema.items.libraryId, options.libraryId));
+  }
+
+  const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+  // Count total consolidated groups efficiently
+  const countInner = db
+    .select({
+      t: sql`lower(trim(${schema.bibRecords.title}))`,
+      a: sql`lower(trim(${schema.bibRecords.authors}))`,
+    })
+    .from(schema.bibRecords)
+    .leftJoin(schema.departments, eq(schema.bibRecords.departmentId, schema.departments.id));
+
+  const shouldJoinItems = Boolean(options.search?.trim() || options.libraryId);
+
+  const [countRes] = await db
+    .select({ total: sql<number>`count(*)::int` })
+    .from(
+      (shouldJoinItems
+        ? countInner.leftJoin(schema.items, eq(schema.bibRecords.id, schema.items.bibId))
+        : countInner
+      )
+        .where(whereClause)
+        .groupBy(
+          sql`lower(trim(${schema.bibRecords.title}))`,
+          sql`lower(trim(${schema.bibRecords.authors}))`,
+        )
+        .as("group_count"),
+    );
+
+  const totalCount = countRes?.total ?? 0;
+  const totalPages = Math.ceil(totalCount / limit);
+
+  const records = await db
+    .select({
+      id: sql<number>`min(${schema.bibRecords.id})`,
+      title: sql<string>`min(${schema.bibRecords.title})`,
+      authors: sql<string>`min(${schema.bibRecords.authors})`,
+      isbn: sql<string | null>`max(${schema.bibRecords.isbn})`,
+      itemTypeId: sql<number>`min(${schema.bibRecords.itemTypeId})`,
+      itemTypeName: sql<string>`min(${schema.itemTypes.name})`,
+      departmentId: sql<number | null>`min(${schema.bibRecords.departmentId})`,
+      departmentName: sql<string | null>`min(${schema.departments.name})`,
+      departmentCode: sql<string | null>`min(${schema.departments.code})`,
+      institutionId: sql<number | null>`min(${schema.departments.institutionId})`,
+      institutionCode: sql<string | null>`min(${schema.institutions.code})`,
+      institutionName: sql<string | null>`min(${schema.institutions.name})`,
+      barcode: sql<string | null>`min(${schema.items.barcode})`,
+      totalCopies: sql<number>`count(${schema.items.id})::int`,
+      availableCopies: sql<number>`count(case when ${schema.items.status} = 'AVAILABLE' then 1 end)::int`,
+      bibCount: sql<number>`count(distinct ${schema.bibRecords.id})::int`,
+    })
+    .from(schema.bibRecords)
+    .innerJoin(schema.itemTypes, eq(schema.bibRecords.itemTypeId, schema.itemTypes.id))
+    .leftJoin(schema.departments, eq(schema.bibRecords.departmentId, schema.departments.id))
+    .leftJoin(schema.institutions, eq(schema.departments.institutionId, schema.institutions.id))
+    .leftJoin(schema.items, eq(schema.bibRecords.id, schema.items.bibId))
+    .where(whereClause)
+    .groupBy(
+      sql`lower(trim(${schema.bibRecords.title}))`,
+      sql`lower(trim(${schema.bibRecords.authors}))`,
+      schema.bibRecords.itemTypeId,
+    )
+    .orderBy(sql`lower(trim(${schema.bibRecords.title}))`)
+    .limit(limit)
+    .offset(offset);
+
+  return {
+    records,
+    pagination: {
+      page,
+      limit,
+      totalCount,
+      totalPages,
+    },
+  };
+}
+
+/**
+ * Retrieves all physical copies of books belonging to a consolidated title and author.
+ */
+export async function getConsolidatedBookCopies(
+  title: string,
+  authors?: string,
+  libraryId?: number,
+  db: DbInstance = defaultDb,
+) {
+  const conditions = [sql`lower(trim(${schema.bibRecords.title})) = lower(trim(${title}))`];
+  if (authors) {
+    conditions.push(sql`lower(trim(${schema.bibRecords.authors})) = lower(trim(${authors}))`);
+  }
+  if (libraryId) {
+    conditions.push(eq(schema.items.libraryId, libraryId));
+  }
+
+  const copies = await db
+    .select({
+      id: schema.items.id,
+      bibId: schema.items.bibId,
+      accessionNo: schema.items.accessionNo,
+      barcode: schema.items.barcode,
+      callNumber: schema.items.callNumber,
+      location: schema.items.location,
+      price: schema.items.price,
+      status: schema.items.status,
+      acquisitionDate: schema.items.acquisitionDate,
+      conditionNote: schema.items.conditionNote,
+      libraryId: schema.items.libraryId,
+      libraryName: schema.libraries.name,
+      departmentId: schema.bibRecords.departmentId,
+      departmentName: schema.departments.name,
+      departmentCode: schema.departments.code,
+      institutionId: schema.departments.institutionId,
+      institutionCode: schema.institutions.code,
+      institutionName: schema.institutions.name,
+      title: schema.bibRecords.title,
+      authors: schema.bibRecords.authors,
+    })
+    .from(schema.items)
+    .innerJoin(schema.bibRecords, eq(schema.items.bibId, schema.bibRecords.id))
+    .innerJoin(schema.libraries, eq(schema.items.libraryId, schema.libraries.id))
+    .leftJoin(schema.departments, eq(schema.bibRecords.departmentId, schema.departments.id))
+    .leftJoin(schema.institutions, eq(schema.departments.institutionId, schema.institutions.id))
+    .where(and(...conditions))
+    .orderBy(schema.items.barcode, schema.items.accessionNo);
+
+  return copies;
+}
+
+/**
+ * Deletes an individual book copy (item) safely.
+ * If no copies remain for the bibliographic record, the bibRecord is also removed.
+ */
+export async function deleteBookCopy(copyId: number, actor: Actor, db: DbInstance = defaultDb) {
+  const [copy] = await db
+    .select({
+      id: schema.items.id,
+      bibId: schema.items.bibId,
+      barcode: schema.items.barcode,
+      accessionNo: schema.items.accessionNo,
+      status: schema.items.status,
+      title: schema.bibRecords.title,
+    })
+    .from(schema.items)
+    .innerJoin(schema.bibRecords, eq(schema.items.bibId, schema.bibRecords.id))
+    .where(eq(schema.items.id, copyId))
+    .limit(1);
+
+  if (!copy) {
+    throw new Error(`Book copy #${copyId} not found`);
+  }
+
+  if (copy.status === "ISSUED") {
+    throw new Error(
+      `Cannot delete copy [${copy.barcode}] because it is currently issued to a patron.`,
+    );
+  }
+
+  await db.transaction(async (tx: DbInstance) => {
+    await tx.delete(schema.items).where(eq(schema.items.id, copyId));
+
+    const remaining = await tx
+      .select({ count: sql<number>`count(*)::int` })
+      .from(schema.items)
+      .where(eq(schema.items.bibId, copy.bibId));
+
+    if ((remaining[0]?.count ?? 0) === 0) {
+      await tx.delete(schema.bibRecords).where(eq(schema.bibRecords.id, copy.bibId));
+    }
+  });
+
+  await recordAuditLog(
+    {
+      actorType: "STAFF",
+      actorId: actor.id,
+      actorName: actor.fullName,
+      action: "ITEM_DELETE",
+      entity: "items",
+      entityId: String(copyId),
+      details: `Deleted book copy [Barcode: ${copy.barcode}, Accession: ${copy.accessionNo}] for "${copy.title}"`,
+      ipAddress: actor.ipAddress,
+    },
+    db,
+  );
+
+  return { success: true, deletedBarcode: copy.barcode };
+}
+
+/**
+ * Deletes an entire bibliographic title and all its physical copies.
+ */
+export async function deleteBibRecordWithCopies(
+  bibId: number,
+  actor: Actor,
+  db: DbInstance = defaultDb,
+) {
+  const [bib] = await db
+    .select()
+    .from(schema.bibRecords)
+    .where(eq(schema.bibRecords.id, bibId))
+    .limit(1);
+
+  if (!bib) {
+    throw new Error(`Bibliographic record #${bibId} not found`);
+  }
+
+  const copies = await db.select().from(schema.items).where(eq(schema.items.bibId, bibId));
+
+  const hasIssued = copies.some((c: { status: string }) => c.status === "ISSUED");
+  if (hasIssued) {
+    throw new Error(
+      `Cannot delete book "${bib.title}" because one or more copies are currently issued.`,
+    );
+  }
+
+  await db.transaction(async (tx: DbInstance) => {
+    await tx.delete(schema.items).where(eq(schema.items.bibId, bibId));
+    await tx.delete(schema.bibRecords).where(eq(schema.bibRecords.id, bibId));
+  });
+
+  await recordAuditLog(
+    {
+      actorType: "STAFF",
+      actorId: actor.id,
+      actorName: actor.fullName,
+      action: "BIB_DELETE",
+      entity: "bib_records",
+      entityId: String(bibId),
+      details: `Deleted title "${bib.title}" and ${copies.length} associated copies`,
+      ipAddress: actor.ipAddress,
+    },
+    db,
+  );
+
+  return { success: true, deletedTitle: bib.title, deletedCopiesCount: copies.length };
+}
+
+/**
+ * Transfers one or more book copies to another department.
+ * Recalculates and updates each book's barcode automatically to match the target department's prefix convention.
+ */
+export async function transferBooksDepartment(
+  itemIds: number[],
+  targetDepartmentId: number,
+  actor: Actor,
+  db: DbInstance = defaultDb,
+) {
+  if (!itemIds || itemIds.length === 0) {
+    throw new Error("No book items specified for department transfer");
+  }
+
+  // 1. Fetch target department and institution
+  const [targetDept] = await db
+    .select({
+      id: schema.departments.id,
+      name: schema.departments.name,
+      code: schema.departments.code,
+      institutionId: schema.departments.institutionId,
+      institutionName: schema.institutions.name,
+      institutionCode: schema.institutions.code,
+    })
+    .from(schema.departments)
+    .innerJoin(schema.institutions, eq(schema.departments.institutionId, schema.institutions.id))
+    .where(eq(schema.departments.id, targetDepartmentId))
+    .limit(1);
+
+  if (!targetDept) {
+    throw new Error(`Target department #${targetDepartmentId} does not exist`);
+  }
+
+  // 2. Fetch the items to transfer
+  const itemsToTransfer = await db
+    .select({
+      id: schema.items.id,
+      bibId: schema.items.bibId,
+      barcode: schema.items.barcode,
+      accessionNo: schema.items.accessionNo,
+      status: schema.items.status,
+      title: schema.bibRecords.title,
+      currentDeptId: schema.bibRecords.departmentId,
+    })
+    .from(schema.items)
+    .innerJoin(schema.bibRecords, eq(schema.items.bibId, schema.bibRecords.id))
+    .where(inArray(schema.items.id, itemIds));
+
+  if (itemsToTransfer.length === 0) {
+    throw new Error("None of the specified book items were found");
+  }
+
+  // 3. Fetch all existing barcodes to prevent collisions
+  const allExistingItems = await db.select({ barcode: schema.items.barcode }).from(schema.items);
+  const existingBarcodeSet = new Set<string>();
+  for (const it of allExistingItems) {
+    if (it.barcode) existingBarcodeSet.add(it.barcode.toUpperCase());
+  }
+
+  // 4. Perform department transfer and barcode updates in a transaction
+  const transferResults: Array<{
+    itemId: number;
+    bibId: number;
+    title: string;
+    oldBarcode: string;
+    newBarcode: string;
+  }> = [];
+
+  await db.transaction(async (tx: DbInstance) => {
+    for (const item of itemsToTransfer) {
+      const oldBarcode = item.barcode;
+      const newBarcode = generateDepartmentBarcode(oldBarcode, targetDept.code, existingBarcodeSet);
+
+      // Register new barcode in the set immediately to avoid collision with subsequent items in this batch
+      existingBarcodeSet.add(newBarcode.toUpperCase());
+
+      // Update item copy's barcode and accession number
+      await tx
+        .update(schema.items)
+        .set({
+          barcode: newBarcode,
+          accessionNo: newBarcode,
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.items.id, item.id));
+
+      // Update department link on bibRecords
+      await tx
+        .update(schema.bibRecords)
+        .set({
+          departmentId: targetDept.id,
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.bibRecords.id, item.bibId));
+
+      transferResults.push({
+        itemId: item.id,
+        bibId: item.bibId,
+        title: item.title,
+        oldBarcode,
+        newBarcode,
+      });
+    }
+  });
+
+  await recordAuditLog(
+    {
+      actorType: "STAFF",
+      actorId: actor.id,
+      actorName: actor.fullName,
+      action: "ITEM_TRANSFER_DEPARTMENT",
+      entity: "items",
+      entityId: String(itemIds[0]),
+      details: `Transferred ${transferResults.length} books to ${targetDept.name} (${targetDept.institutionCode}): ${transferResults.map((r) => `${r.oldBarcode} -> ${r.newBarcode}`).join(", ")}`,
+      ipAddress: actor.ipAddress,
+    },
+    db,
+  );
+
+  return {
+    success: true,
+    targetDepartment: {
+      id: targetDept.id,
+      name: targetDept.name,
+      code: targetDept.code,
+      institutionCode: targetDept.institutionCode,
+    },
+    transferredCount: transferResults.length,
+    transfers: transferResults,
+  };
 }

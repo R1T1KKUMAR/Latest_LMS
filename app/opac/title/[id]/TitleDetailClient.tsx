@@ -172,10 +172,10 @@ export function TitleDetailClient({
           </div>
 
           {/* Action Box */}
-          <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-5 lg:w-72 flex flex-col justify-between space-y-4">
+          <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-4 sm:p-5 lg:w-72 flex flex-col justify-between space-y-4">
             <div>
               <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                Hold &amp; Loan Status
+                Hold &amp; Issue Status
               </h3>
               <div className="mt-3 space-y-2 text-xs">
                 <div className="flex justify-between">
@@ -216,8 +216,8 @@ export function TitleDetailClient({
         </div>
       </div>
 
-      {/* Physical Copies and Shelf Locations Table (FR-OP-01) */}
-      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-xs space-y-4">
+      {/* Physical Copies and Shelf Locations (FR-OP-01) */}
+      <div className="rounded-xl border border-slate-200 bg-white p-4 sm:p-6 shadow-xs space-y-4">
         <div>
           <h2 className="text-base font-bold text-slate-900">
             Physical Copies &amp; Shelf Locations
@@ -233,34 +233,20 @@ export function TitleDetailClient({
             No physical copies are currently catalogued for this title.
           </p>
         ) : (
-          <Table>
-            <TableHead>
-              <tr>
-                <TableHeaderCell>Accession #</TableHeaderCell>
-                <TableHeaderCell>Barcode</TableHeaderCell>
-                <TableHeaderCell>Library</TableHeaderCell>
-                <TableHeaderCell>Shelf Location / Mark</TableHeaderCell>
-                <TableHeaderCell>Call Number</TableHeaderCell>
-                <TableHeaderCell>Copy Status</TableHeaderCell>
-              </tr>
-            </TableHead>
-            <TableBody>
+          <>
+            {/* Mobile View for Copies (< sm) */}
+            <div className="space-y-2.5 sm:hidden">
               {title.copies.map((copy) => (
-                <TableRow key={copy.id}>
-                  <TableCell className="font-mono font-semibold text-slate-900">
-                    {copy.accessionNo}
-                  </TableCell>
-                  <TableCell className="font-mono text-xs text-slate-600">{copy.barcode}</TableCell>
-                  <TableCell className="text-xs text-slate-700">{copy.libraryName}</TableCell>
-                  <TableCell className="font-semibold text-xs text-blue-950">
-                    📍 {copy.shelfLocation || "Main Stacks"}
-                  </TableCell>
-                  <TableCell className="font-mono text-xs text-slate-600">
-                    {copy.callNumber || title.callNumber || "—"}
-                  </TableCell>
-                  <TableCell>
+                <div
+                  key={copy.id}
+                  className="rounded-lg border border-slate-200 bg-slate-50/60 p-3 text-xs space-y-1.5"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-mono font-bold text-slate-900">
+                      Acc: {copy.accessionNo}
+                    </span>
                     <span
-                      className={`inline-flex rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
+                      className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${
                         copy.status === "AVAILABLE"
                           ? "bg-emerald-100 text-emerald-800"
                           : copy.status === "REFERENCE_ONLY"
@@ -270,11 +256,64 @@ export function TitleDetailClient({
                     >
                       {copy.status}
                     </span>
-                  </TableCell>
-                </TableRow>
+                  </div>
+                  <div className="text-slate-600 flex justify-between text-[11px]">
+                    <span>{copy.libraryName}</span>
+                    <span className="font-mono text-slate-500">Barcode: {copy.barcode}</span>
+                  </div>
+                  <div className="text-blue-950 font-medium text-[11px]">
+                    📍 {copy.shelfLocation || "Main Stacks"}
+                  </div>
+                </div>
               ))}
-            </TableBody>
-          </Table>
+            </div>
+
+            {/* Desktop Table (>= sm) */}
+            <div className="hidden sm:block">
+              <Table>
+                <TableHead>
+                  <tr>
+                    <TableHeaderCell>Accession #</TableHeaderCell>
+                    <TableHeaderCell>Barcode</TableHeaderCell>
+                    <TableHeaderCell>Library</TableHeaderCell>
+                    <TableHeaderCell>Shelf Location / Mark</TableHeaderCell>
+                    <TableHeaderCell>Call Number</TableHeaderCell>
+                    <TableHeaderCell>Copy Status</TableHeaderCell>
+                  </tr>
+                </TableHead>
+                <TableBody>
+                  {title.copies.map((copy) => (
+                    <TableRow key={copy.id}>
+                      <TableCell className="font-mono font-semibold text-slate-900">
+                        {copy.accessionNo}
+                      </TableCell>
+                      <TableCell className="font-mono text-xs text-slate-600">{copy.barcode}</TableCell>
+                      <TableCell className="text-xs text-slate-700">{copy.libraryName}</TableCell>
+                      <TableCell className="font-semibold text-xs text-blue-950">
+                        📍 {copy.shelfLocation || "Main Stacks"}
+                      </TableCell>
+                      <TableCell className="font-mono text-xs text-slate-600">
+                        {copy.callNumber || title.callNumber || "—"}
+                      </TableCell>
+                      <TableCell>
+                        <span
+                          className={`inline-flex rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
+                            copy.status === "AVAILABLE"
+                              ? "bg-emerald-100 text-emerald-800"
+                              : copy.status === "REFERENCE_ONLY"
+                                ? "bg-purple-100 text-purple-800"
+                                : "bg-amber-100 text-amber-800"
+                          }`}
+                        >
+                          {copy.status}
+                        </span>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </>
         )}
       </div>
 

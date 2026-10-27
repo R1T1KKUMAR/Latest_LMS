@@ -55,7 +55,7 @@ describe("Phase 13: Import API Route Handlers Suite (Auth, RBAC, CSRF, Multipart
   describe("1. POST /api/imports/preview", () => {
     it("returns 401 when unauthenticated", async () => {
       const formData = new FormData();
-      formData.append("file", new Blob(["roll_no,name\n101,A"], { type: "text/csv" }), "test.csv");
+      formData.append("file", new Blob(["card_no,name\n101,A"], { type: "text/csv" }), "test.csv");
       formData.append("type", "students");
 
       const req = new NextRequest("http://localhost:3000/api/imports/preview", {
@@ -69,7 +69,7 @@ describe("Phase 13: Import API Route Handlers Suite (Auth, RBAC, CSRF, Multipart
 
     it("returns 403 when user lacks PATRON_IMPORT (Assistant Librarian)", async () => {
       const formData = new FormData();
-      formData.append("file", new Blob(["roll_no,name\n101,A"], { type: "text/csv" }), "test.csv");
+      formData.append("file", new Blob(["card_no,name\n101,A"], { type: "text/csv" }), "test.csv");
       formData.append("type", "students");
 
       const req = new NextRequest("http://localhost:3000/api/imports/preview", {
@@ -103,7 +103,7 @@ describe("Phase 13: Import API Route Handlers Suite (Auth, RBAC, CSRF, Multipart
     });
 
     it("returns 200 with preview summary for authorized librarian", async () => {
-      const csv = "roll_no,first_name,last_name\n310001,Kunal,Kapoor\n310002,Pooja,Hegde";
+      const csv = "card_no,first_name,last_name\n310001,Kunal,Kapoor\n310002,Pooja,Hegde";
       const formData = new FormData();
       formData.append("file", new Blob([csv], { type: "text/csv" }), "students.csv");
       formData.append("type", "students");
@@ -176,7 +176,7 @@ describe("Phase 13: Import API Route Handlers Suite (Auth, RBAC, CSRF, Multipart
     });
 
     it("returns 200 and commits rows for authorized librarian with valid CSRF", async () => {
-      const csv = "roll_no,first_name,last_name\n320001,Ananya,Pandey";
+      const csv = "card_no,first_name,last_name\n320001,Ananya,Pandey";
       const formData = new FormData();
       formData.append("file", new Blob([csv], { type: "text/csv" }), "students_confirm.csv");
       formData.append("type", "students");
@@ -202,7 +202,7 @@ describe("Phase 13: Import API Route Handlers Suite (Auth, RBAC, CSRF, Multipart
 
   describe("3. POST /api/imports/patrons (Direct Endpoint)", () => {
     it("successfully validates and commits patron roster", async () => {
-      const csv = "roll_no,first_name,last_name\n330001,Kartik,Aaryan";
+      const csv = "card_no,first_name,last_name\n330001,Kartik,Aaryan";
       const req = new NextRequest("http://localhost:3000/api/imports/patrons", {
         method: "POST",
         headers: {

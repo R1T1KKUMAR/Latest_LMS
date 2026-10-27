@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   COLLEGE_CONFIGS,
   type CollegeInfo,
@@ -23,12 +23,7 @@ import {
 } from "@/components/ui/Table";
 import { generateCode128Svg } from "@/lib/barcode";
 import { formatDate } from "@/lib/utils";
-import {
-  PATRON_STATUSES,
-  PATRON_TYPES,
-  type PatronStatus,
-  type PatronType,
-} from "@/lib/validations/patron";
+import { PATRON_STATUSES, type PatronStatus, type PatronType } from "@/lib/validations/patron";
 
 export interface PatronListItem {
   id: number;
@@ -37,6 +32,9 @@ export interface PatronListItem {
   patronType: string;
   categoryId: number;
   categoryName: string;
+  libraryId?: number | null;
+  libraryCode?: string | null;
+  libraryName?: string | null;
   institutionId?: number | null;
   institutionCode?: string | null;
   institutionName?: string | null;
@@ -44,13 +42,13 @@ export interface PatronListItem {
   courseCode?: string | null;
   courseName?: string | null;
   departmentId?: number | null;
+  departmentCode?: string | null;
   departmentName?: string | null;
   academicYear?: number | null;
   semester?: number | null;
   section?: string | null;
   email: string | null;
   mobile: string | null;
-  rollNo: string | null;
   employeeId: string | null;
   cardExpiry: string;
   status: string;
@@ -73,6 +71,11 @@ interface PatronsClientProps {
   institutions: MasterOption[];
   departments: MasterOption[];
   courses: MasterOption[];
+  libraries?: MasterOption[];
+  userLibraryId?: number | null;
+  selectedLibraryId?: number | null;
+  isSuperAdmin?: boolean;
+  autoOpenAddPatron?: boolean;
   csrfToken: string;
   canManage: boolean;
 }
@@ -83,6 +86,11 @@ export function PatronsClient({
   institutions,
   departments,
   courses,
+  libraries,
+  userLibraryId,
+  selectedLibraryId,
+  isSuperAdmin,
+  autoOpenAddPatron,
   csrfToken,
   canManage,
 }: PatronsClientProps) {
@@ -110,10 +118,13 @@ export function PatronsClient({
     patronType: "STUDENT" as PatronType,
     categoryId: categories[0]?.id ? String(categories[0].id) : "1",
     institutionId: institutions[0]?.id ? String(institutions[0].id) : "1",
+    libraryId:
+      (selectedLibraryId ? String(selectedLibraryId) : "") ||
+      (userLibraryId ? String(userLibraryId) : "") ||
+      (libraries?.[0]?.id ? String(libraries[0].id) : "1"),
     firstName: "",
     middleName: "",
     lastName: "",
-    rollNo: "",
     employeeId: "",
     departmentId: "",
     courseId: "",
@@ -124,6 +135,13 @@ export function PatronsClient({
     gender: "MALE",
     address: "",
   });
+
+  // Auto-open Add Patron modal if requested via URL
+  useEffect(() => {
+    if (autoOpenAddPatron && canManage) {
+      setShowRegisterModal(true);
+    }
+  }, [autoOpenAddPatron, canManage]);
 
   // Profile Inspector Modal state
   const [selectedPatronId, setSelectedPatronId] = useState<number | null>(null);
@@ -138,7 +156,16 @@ export function PatronsClient({
   const [barcodePreview, setBarcodePreview] = useState<{
     cardNo: string;
     fullName: string;
+    libraryName?: string;
   } | null>(null);
+
+  // Delete Patron Modal State
+  const [deleteModal, setDeleteModal] = useState<{
+    open: boolean;
+    patron: PatronListItem;
+    force: boolean;
+  } | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Student count by College
   const collegeCounts = useMemo(() => {
@@ -176,14 +203,49 @@ export function PatronsClient({
     return Array.from(set);
   }, [initialPatrons, selectedCollege]);
 
-  // Available departments
+  // Available departments dynamically filtered by selected college
   const availableDepts = useMemo(() => {
     const set = new Set<string>();
-    for (const p of initialPatrons) {
-      if (p.departmentName) set.add(p.departmentName);
+
+    if (selectedCollege === "ALL") {
+      // All departments across all colleges
+      for (const d of departments) {
+        if (d.name) set.add(d.name);
+      }
+      for (const cfg of Object.values(COLLEGE_CONFIGS)) {
+        for (const c of cfg.defaultCourses) {
+          set.add(c);
+        }
+      }
+      for (const p of initialPatrons) {
+        if (p.departmentName) set.add(p.departmentName);
+      }
+    } else {
+      // Find matching institution ID for selectedCollege
+      const inst = institutions.find((i) => i.code.toUpperCase() === selectedCollege);
+      if (inst) {
+        for (const d of departments) {
+          if (d.institutionId === inst.id && d.name) {
+            set.add(d.name);
+          }
+        }
+      }
+      // Include official departments/programs from college config
+      if (COLLEGE_CONFIGS[selectedCollege]) {
+        for (const c of COLLEGE_CONFIGS[selectedCollege].defaultCourses) {
+          set.add(c);
+        }
+      }
+      // Plus any matching patron's department name
+      for (const p of initialPatrons) {
+        if (resolveCollege(p).code === selectedCollege && p.departmentName) {
+          set.add(p.departmentName);
+        }
+      }
     }
+
     return Array.from(set);
-  }, [initialPatrons]);
+  }, [initialPatrons, selectedCollege, departments, institutions]);
 
   // Filtered patrons
   const filtered = useMemo(() => {
@@ -193,7 +255,14 @@ export function PatronsClient({
 
       if (selectedCollege !== "ALL" && col.code !== selectedCollege) return false;
       if (selectedCourse !== "ALL" && crs !== selectedCourse) return false;
-      if (selectedDept !== "ALL" && p.departmentName !== selectedDept) return false;
+      if (
+        selectedDept !== "ALL" &&
+        p.departmentName !== selectedDept &&
+        p.departmentCode !== selectedDept &&
+        crs !== selectedDept
+      ) {
+        return false;
+      }
       if (selectedYear !== "ALL" && String(p.academicYear) !== selectedYear) return false;
       if (typeFilter && p.patronType !== typeFilter) return false;
       if (statusFilter && p.status !== statusFilter) return false;
@@ -204,7 +273,6 @@ export function PatronsClient({
       return (
         p.fullName.toLowerCase().includes(q) ||
         p.cardNo.toLowerCase().includes(q) ||
-        (p.rollNo && p.rollNo.toLowerCase().includes(q)) ||
         (p.employeeId && p.employeeId.toLowerCase().includes(q)) ||
         (p.email && p.email.toLowerCase().includes(q)) ||
         (p.mobile && p.mobile.includes(q)) ||
@@ -275,6 +343,12 @@ export function PatronsClient({
     return courses.filter((c) => !c.institutionId || c.institutionId === instId);
   }, [courses, newPatron.institutionId]);
 
+  // Filter departments for registration modal based on selected institution
+  const registerModalDepartments = useMemo(() => {
+    const instId = Number(newPatron.institutionId);
+    return departments.filter((d) => !d.institutionId || d.institutionId === instId);
+  }, [departments, newPatron.institutionId]);
+
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
@@ -291,10 +365,10 @@ export function PatronsClient({
           patronType: newPatron.patronType,
           categoryId: Number(newPatron.categoryId),
           institutionId: Number(newPatron.institutionId),
+          libraryId: newPatron.libraryId ? Number(newPatron.libraryId) : undefined,
           firstName: newPatron.firstName,
           middleName: newPatron.middleName || undefined,
           lastName: newPatron.lastName || undefined,
-          rollNo: newPatron.rollNo || undefined,
           employeeId: newPatron.employeeId || undefined,
           departmentId: newPatron.departmentId ? Number(newPatron.departmentId) : undefined,
           courseId: newPatron.courseId ? Number(newPatron.courseId) : undefined,
@@ -321,10 +395,13 @@ export function PatronsClient({
           patronType: "STUDENT",
           categoryId: categories[0]?.id ? String(categories[0].id) : "1",
           institutionId: institutions[0]?.id ? String(institutions[0].id) : "1",
+          libraryId:
+            (selectedLibraryId ? String(selectedLibraryId) : "") ||
+            (userLibraryId ? String(userLibraryId) : "") ||
+            (libraries?.[0]?.id ? String(libraries[0].id) : "1"),
           firstName: "",
           middleName: "",
           lastName: "",
-          rollNo: "",
           employeeId: "",
           departmentId: "",
           courseId: "",
@@ -403,6 +480,37 @@ export function PatronsClient({
     }
   };
 
+  const handleDeletePatron = async () => {
+    if (!deleteModal) return;
+    setIsDeleting(true);
+    try {
+      const url = `/api/patrons/${deleteModal.patron.id}${deleteModal.force ? "?force=true" : ""}`;
+      const res = await fetch(url, {
+        method: "DELETE",
+        headers: {
+          "x-csrf-token": csrfToken,
+        },
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Failed to delete patron");
+      }
+      setActionAlert({
+        variant: "success",
+        message: data.message || `Patron "${deleteModal.patron.fullName}" deleted successfully.`,
+      });
+      setDeleteModal(null);
+      router.refresh();
+    } catch (err: unknown) {
+      setActionAlert({
+        variant: "error",
+        message: err instanceof Error ? err.message : "Failed to delete patron",
+      });
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {actionAlert && (
@@ -443,11 +551,65 @@ export function PatronsClient({
                 <span className="text-sm">{cfg.icon}</span>
               </div>
               <div className="mt-1 text-xl font-bold text-slate-900">{count}</div>
-              <div className="text-[10px] text-slate-500 truncate">{cfg.defaultCourses.join(", ")}</div>
+              <div className="text-[10px] text-slate-500 truncate">
+                {cfg.defaultCourses.join(", ")}
+              </div>
             </div>
           );
         })}
       </div>
+
+      {/* Super Admin Multi-Library Toggle Pills */}
+      {isSuperAdmin && libraries && libraries.length > 0 && (
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 bg-purple-50/50 border border-purple-200 rounded-xl">
+          <div className="flex items-center gap-2">
+            <span className="flex h-2.5 w-2.5 rounded-full bg-purple-600 animate-pulse" />
+            <span className="text-xs font-bold uppercase tracking-wider text-purple-900">
+              Filter by Library Branch:
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => router.push("/patrons")}
+              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition border flex items-center gap-1.5 ${
+                !selectedLibraryId
+                  ? "bg-purple-900 text-white border-purple-900 shadow-xs"
+                  : "bg-white text-slate-700 border-slate-200 hover:bg-slate-100"
+              }`}
+            >
+              <span>🏛️</span>
+              <span>All Libraries</span>
+            </button>
+            {libraries.map((lib) => {
+              const isSelected = selectedLibraryId === lib.id;
+              const icon =
+                lib.code === "RBCN"
+                  ? "🏥"
+                  : lib.code === "RBCP"
+                    ? "💊"
+                    : lib.code === "LIB-GN"
+                      ? "🏢"
+                      : "📚";
+              return (
+                <button
+                  key={lib.id}
+                  type="button"
+                  onClick={() => router.push(`/patrons?libraryId=${lib.id}`)}
+                  className={`px-3 py-1.5 text-xs font-bold rounded-lg transition border flex items-center gap-1.5 ${
+                    isSelected
+                      ? "bg-blue-900 text-white border-blue-900 shadow-xs"
+                      : "bg-white text-slate-700 border-slate-200 hover:bg-slate-100"
+                  }`}
+                >
+                  <span>{icon}</span>
+                  <span>{lib.name}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* College & Course Categorical Tabs Toolbar */}
       <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs space-y-3">
@@ -459,6 +621,7 @@ export function PatronsClient({
             onClick={() => {
               setSelectedCollege("ALL");
               setSelectedCourse("ALL");
+              setSelectedDept("ALL");
             }}
             className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 font-semibold transition border ${
               selectedCollege === "ALL"
@@ -470,7 +633,9 @@ export function PatronsClient({
             <span>All Colleges</span>
             <span
               className={`ml-1 rounded-full px-1.5 py-0.2 text-[10px] ${
-                selectedCollege === "ALL" ? "bg-slate-800 text-white" : "bg-slate-100 text-slate-700"
+                selectedCollege === "ALL"
+                  ? "bg-slate-800 text-white"
+                  : "bg-slate-100 text-slate-700"
               }`}
             >
               {collegeCounts.ALL}
@@ -487,6 +652,7 @@ export function PatronsClient({
                 onClick={() => {
                   setSelectedCollege(cfg.code);
                   setSelectedCourse("ALL");
+                  setSelectedDept("ALL");
                 }}
                 className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 font-semibold transition border ${
                   isSelected
@@ -558,7 +724,7 @@ export function PatronsClient({
             <div className="w-full sm:w-64">
               <Input
                 id="patron-search-filter"
-                placeholder="Search name, roll no, card, branch..."
+                placeholder="Search name, card, employee ID, branch..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
@@ -595,7 +761,8 @@ export function PatronsClient({
                 onChange={(e) => setTypeFilter(e.target.value)}
                 options={[
                   { value: "", label: "All Types" },
-                  ...PATRON_TYPES.map((t) => ({ value: t, label: t })),
+                  { value: "STUDENT", label: "Student" },
+                  { value: "FACULTY", label: "Faculty" },
                 ]}
               />
             </div>
@@ -730,7 +897,7 @@ export function PatronsClient({
                                 <TableHeaderCell>Card Number</TableHeaderCell>
                                 <TableHeaderCell>Full Name</TableHeaderCell>
                                 <TableHeaderCell>Type &amp; Category</TableHeaderCell>
-                                <TableHeaderCell>Roll / Employee ID</TableHeaderCell>
+                                <TableHeaderCell>Employee ID</TableHeaderCell>
                                 <TableHeaderCell>Branch / Dept</TableHeaderCell>
                                 <TableHeaderCell>Year / Sem</TableHeaderCell>
                                 <TableHeaderCell>Status</TableHeaderCell>
@@ -770,15 +937,13 @@ export function PatronsClient({
                                       </div>
                                     </TableCell>
                                     <TableCell className="font-mono text-xs text-slate-700">
-                                      {patron.rollNo || patron.employeeId || "—"}
+                                      {patron.employeeId || "—"}
                                     </TableCell>
                                     <TableCell className="text-xs text-slate-600">
                                       {patron.departmentName || "—"}
                                     </TableCell>
                                     <TableCell className="text-xs text-slate-600">
-                                      {patron.academicYear
-                                        ? `Yr ${patron.academicYear}`
-                                        : "—"}
+                                      {patron.academicYear ? `Yr ${patron.academicYear}` : "—"}
                                       {patron.semester ? ` (Sem ${patron.semester})` : ""}
                                     </TableCell>
                                     <TableCell>
@@ -793,13 +958,25 @@ export function PatronsClient({
                                       </span>
                                     </TableCell>
                                     <TableCell>
-                                      <Button
-                                        variant="secondary"
-                                        size="sm"
-                                        onClick={() => handleViewProfile(patron.id)}
-                                      >
-                                        Profile
-                                      </Button>
+                                      <div className="flex items-center gap-1.5">
+                                        <Button
+                                          variant="secondary"
+                                          size="sm"
+                                          onClick={() => handleViewProfile(patron.id)}
+                                        >
+                                          Profile
+                                        </Button>
+                                        {canManage && (
+                                          <Button
+                                            variant="danger"
+                                            size="sm"
+                                            onClick={() => setDeleteModal({ open: true, patron, force: false })}
+                                            title="Delete this patron record"
+                                          >
+                                            Delete
+                                          </Button>
+                                        )}
+                                      </div>
                                     </TableCell>
                                   </TableRow>
                                 );
@@ -825,7 +1002,7 @@ export function PatronsClient({
                 <TableHeaderCell>Full Name</TableHeaderCell>
                 <TableHeaderCell>College</TableHeaderCell>
                 <TableHeaderCell>Program &amp; Branch</TableHeaderCell>
-                <TableHeaderCell>Roll / ID</TableHeaderCell>
+                <TableHeaderCell>Employee ID</TableHeaderCell>
                 <TableHeaderCell>Year / Sem</TableHeaderCell>
                 <TableHeaderCell>Status</TableHeaderCell>
                 <TableHeaderCell>Actions</TableHeaderCell>
@@ -869,7 +1046,7 @@ export function PatronsClient({
                       </div>
                     </TableCell>
                     <TableCell className="font-mono text-xs text-slate-700">
-                      {patron.rollNo || patron.employeeId || "—"}
+                      {patron.employeeId || "—"}
                     </TableCell>
                     <TableCell className="text-xs text-slate-600">
                       {patron.academicYear ? `Yr ${patron.academicYear}` : "—"}
@@ -889,13 +1066,25 @@ export function PatronsClient({
                       </span>
                     </TableCell>
                     <TableCell>
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => handleViewProfile(patron.id)}
-                      >
-                        Profile
-                      </Button>
+                      <div className="flex items-center gap-1.5">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => handleViewProfile(patron.id)}
+                        >
+                          Profile
+                        </Button>
+                        {canManage && (
+                          <Button
+                            variant="danger"
+                            size="sm"
+                            onClick={() => setDeleteModal({ open: true, patron, force: false })}
+                            title="Delete this patron record"
+                          >
+                            Delete
+                          </Button>
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 );
@@ -937,7 +1126,10 @@ export function PatronsClient({
                     onChange={(e) =>
                       setNewPatron({ ...newPatron, patronType: e.target.value as PatronType })
                     }
-                    options={PATRON_TYPES.map((t) => ({ value: t, label: t }))}
+                    options={[
+                      { value: "STUDENT", label: "Student" },
+                      { value: "FACULTY", label: "Faculty" },
+                    ]}
                     required
                   />
                 </div>
@@ -963,6 +1155,20 @@ export function PatronsClient({
                     options={institutions.map((i) => ({
                       value: String(i.id),
                       label: `${i.name} (${i.code})`,
+                    }))}
+                    required
+                  />
+                </div>
+                <div>
+                  <Select
+                    id="new-patron-library"
+                    label={`Assigned Library Branch${!isSuperAdmin && userLibraryId ? " (Assigned)" : ""}`}
+                    value={newPatron.libraryId}
+                    disabled={!isSuperAdmin && Boolean(userLibraryId)}
+                    onChange={(e) => setNewPatron({ ...newPatron, libraryId: e.target.value })}
+                    options={(libraries || []).map((l) => ({
+                      value: String(l.id),
+                      label: `${l.name} (${l.code})`,
                     }))}
                     required
                   />
@@ -996,36 +1202,18 @@ export function PatronsClient({
                     onChange={(e) => setNewPatron({ ...newPatron, lastName: e.target.value })}
                   />
                 </div>
-                <div>
-                  <Input
-                    id="new-patron-roll-no"
-                    label={
-                      newPatron.patronType === "STUDENT"
-                        ? "Student Roll No *"
-                        : "Roll No (if student)"
-                    }
-                    placeholder="e.g. 2301430100045"
-                    value={newPatron.rollNo}
-                    onChange={(e) => setNewPatron({ ...newPatron, rollNo: e.target.value })}
-                    required={newPatron.patronType === "STUDENT"}
-                  />
-                </div>
-                <div>
-                  <Input
-                    id="new-patron-employee-id"
-                    label={
-                      newPatron.patronType === "FACULTY" || newPatron.patronType === "STAFF"
-                        ? "Employee ID *"
-                        : "Employee ID (if faculty/staff)"
-                    }
-                    placeholder="e.g. EMP-101"
-                    value={newPatron.employeeId}
-                    onChange={(e) => setNewPatron({ ...newPatron, employeeId: e.target.value })}
-                    required={
-                      newPatron.patronType === "FACULTY" || newPatron.patronType === "STAFF"
-                    }
-                  />
-                </div>
+                {(newPatron.patronType === "FACULTY" || newPatron.patronType === "STAFF") && (
+                  <div>
+                    <Input
+                      id="new-patron-employee-id"
+                      label="Employee ID *"
+                      placeholder="e.g. EMP-101"
+                      value={newPatron.employeeId}
+                      onChange={(e) => setNewPatron({ ...newPatron, employeeId: e.target.value })}
+                      required
+                    />
+                  </div>
+                )}
                 <div>
                   <Select
                     id="new-patron-dept"
@@ -1034,7 +1222,10 @@ export function PatronsClient({
                     onChange={(e) => setNewPatron({ ...newPatron, departmentId: e.target.value })}
                     options={[
                       { value: "", label: "Select Department" },
-                      ...departments.map((d) => ({ value: String(d.id), label: d.name })),
+                      ...registerModalDepartments.map((d) => ({
+                        value: String(d.id),
+                        label: d.name,
+                      })),
                     ]}
                   />
                 </div>
@@ -1082,7 +1273,7 @@ export function PatronsClient({
               </div>
 
               <p className="text-xs text-slate-500 pt-2">
-                * Note: Library card number defaults to Roll No / Employee ID per FR-PA-02. Initial
+                * Note: Library card number is auto-allocated or defaults to Employee ID. Initial
                 OPAC login password equals the card number (must be changed upon first login).
               </p>
 
@@ -1140,6 +1331,7 @@ export function PatronsClient({
                     setBarcodePreview({
                       cardNo: profileDetail.patron.cardNo,
                       fullName: `${profileDetail.patron.firstName} ${profileDetail.patron.lastName || ""}`,
+                      libraryName: profileDetail.patron.libraryName || "Central Library",
                     })
                   }
                   className="rounded border border-slate-200 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
@@ -1159,7 +1351,7 @@ export function PatronsClient({
             {/* Profile KPI Stats */}
             <div className="grid grid-cols-3 gap-3 text-xs">
               <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-3">
-                <span className="text-slate-500">Active Book Loans</span>
+                <span className="text-slate-500">Active Issued Books</span>
                 <div className="mt-1 text-lg font-bold text-slate-900">
                   {profileDetail.stats.activeLoans}
                 </div>
@@ -1197,6 +1389,12 @@ export function PatronsClient({
             {/* Profile Fields Details */}
             <div className="rounded-lg border border-slate-200 p-4 space-y-2 text-xs">
               <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <span className="text-slate-500">Assigned Library:</span>{" "}
+                  <strong className="text-blue-900 font-bold bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded">
+                    {profileDetail.patron.libraryName || "Central Library"}
+                  </strong>
+                </div>
                 <div>
                   <span className="text-slate-500">Institution / College:</span>{" "}
                   <strong className="text-slate-800">
@@ -1279,6 +1477,30 @@ export function PatronsClient({
                   >
                     Reset OPAC Password
                   </Button>
+
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    onClick={() => {
+                      const targetPatron = initialPatrons.find((p) => p.id === profileDetail.patron.id) || {
+                        id: profileDetail.patron.id,
+                        cardNo: profileDetail.patron.cardNo,
+                        fullName: [profileDetail.patron.firstName, profileDetail.patron.lastName].filter(Boolean).join(" "),
+                        patronType: profileDetail.patron.patronType,
+                        categoryId: profileDetail.patron.categoryId,
+                        categoryName: profileDetail.patron.categoryName,
+                        status: profileDetail.patron.status,
+                        email: profileDetail.patron.email,
+                        mobile: profileDetail.patron.mobile,
+                        employeeId: profileDetail.patron.employeeId,
+                        cardExpiry: String(profileDetail.patron.cardExpiry),
+                      };
+                      setProfileDetail(null);
+                      setDeleteModal({ open: true, patron: targetPatron, force: false });
+                    }}
+                  >
+                    Delete Patron Record
+                  </Button>
                 </div>
               </div>
             )}
@@ -1304,6 +1526,9 @@ export function PatronsClient({
             <h3 id="card-barcode-modal-title" className="text-sm font-bold text-slate-900">
               Patron ID Card Barcode (FR-PA-07)
             </h3>
+            <div className="rounded-lg bg-blue-50 border border-blue-200 py-1.5 px-3 text-xs font-bold text-blue-900">
+              Library: {barcodePreview.libraryName || "Central Library"}
+            </div>
             <p className="text-xs text-slate-600 font-semibold">{barcodePreview.fullName}</p>
 
             <div
@@ -1320,6 +1545,66 @@ export function PatronsClient({
             <Button variant="outline" onClick={() => setBarcodePreview(null)} className="w-full">
               Close Preview
             </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Patron Confirmation Modal */}
+      {deleteModal && deleteModal.open && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-patron-modal-title"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-xs"
+        >
+          <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl border border-slate-200 space-y-4">
+            <div className="flex items-start gap-3">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-100 text-red-600 text-lg font-bold">
+                ⚠️
+              </span>
+              <div>
+                <h3 id="delete-patron-modal-title" className="text-base font-bold text-slate-900">
+                  Delete {deleteModal.patron.patronType === "STUDENT" ? "Student" : "Patron"} Record
+                </h3>
+                <p className="mt-1 text-xs text-slate-500 leading-relaxed">
+                  Are you sure you want to permanently delete{" "}
+                  <strong className="text-slate-900">{deleteModal.patron.fullName}</strong>{" "}
+                  (Card: <code className="bg-slate-100 px-1 py-0.5 rounded font-mono">{deleteModal.patron.cardNo}</code>
+                  {deleteModal.patron.employeeId ? `, Emp ID: ${deleteModal.patron.employeeId}` : ""})?
+                </p>
+              </div>
+            </div>
+
+            <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800 space-y-1.5">
+              <p className="font-semibold text-amber-900">Irreversible Action</p>
+              <p>This will remove this record, login credentials, and session entries from the library management database.</p>
+              <label className="flex items-center gap-2 pt-1 font-medium text-amber-950 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={deleteModal.force}
+                  onChange={(e) => setDeleteModal({ ...deleteModal, force: e.target.checked })}
+                  className="rounded border-amber-400 text-red-600 focus:ring-red-500"
+                />
+                Force deletion if test data (releases any borrowed items back to library)
+              </label>
+            </div>
+
+            <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">
+              <Button
+                variant="outline"
+                onClick={() => setDeleteModal(null)}
+                disabled={isDeleting}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="danger"
+                onClick={handleDeletePatron}
+                isLoading={isDeleting}
+              >
+                Yes, Delete Record
+              </Button>
+            </div>
           </div>
         </div>
       )}

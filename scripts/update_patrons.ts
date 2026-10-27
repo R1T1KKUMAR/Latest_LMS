@@ -5,7 +5,10 @@ import { eq } from "drizzle-orm";
 async function run() {
   console.log("Checking institutions...");
   const insts = await db.select().from(schema.institutions);
-  console.log("Institutions:", insts.map(i => ({ id: i.id, code: i.code, name: i.name })));
+  console.log(
+    "Institutions:",
+    insts.map((i) => ({ id: i.id, code: i.code, name: i.name })),
+  );
 
   console.log("Checking courses...");
   const existingCourses = await db.select().from(schema.courses);
@@ -39,7 +42,7 @@ async function run() {
   ];
 
   for (const c of coursesToAdd) {
-    const found = existingCourses.find(ec => ec.code === c.code);
+    const found = existingCourses.find((ec) => ec.code === c.code);
     if (!found) {
       console.log(`Adding course ${c.code} (${c.name})...`);
       await db.insert(schema.courses).values(c);
@@ -47,13 +50,16 @@ async function run() {
   }
 
   const allCourses = await db.select().from(schema.courses);
-  console.log("All Courses:", allCourses.map(c => ({ id: c.id, inst: c.institutionId, code: c.code, name: c.name })));
+  console.log(
+    "All Courses:",
+    allCourses.map((c) => ({ id: c.id, inst: c.institutionId, code: c.code, name: c.name })),
+  );
 
   // Check departments
   const depts = await db.select().from(schema.departments);
 
   // Ensure Polytechnic department exists under inst 1 if needed
-  const polyDept = depts.find(d => d.code === "POLY");
+  const polyDept = depts.find((d) => d.code === "POLY");
   if (!polyDept) {
     console.log("Adding Polytechnic department...");
     await db.insert(schema.departments).values({
@@ -67,27 +73,27 @@ async function run() {
   const updatedDepts = await db.select().from(schema.departments);
 
   // Let's get course IDs
-  const cBtechCs = allCourses.find(c => c.code === "BTECH-CS")?.id ?? 1;
-  const cBtechMe = allCourses.find(c => c.code === "BTECH-ME")?.id ?? 2;
-  const cBtechEe = allCourses.find(c => c.code === "BTECH-EE")?.id ?? 4;
-  const cDiploma = allCourses.find(c => c.code === "DIPLOMA-ENG")?.id ?? 12;
-  const cBpharm = allCourses.find(c => c.code === "BPHARM")?.id ?? 10;
-  const cDpharm = allCourses.find(c => c.code === "DPHARM")?.id ?? 13;
-  const cBscNurs = allCourses.find(c => c.code === "BSC-NURS")?.id ?? 11;
-  const cGnm = allCourses.find(c => c.code === "GNM")?.id ?? 14;
-  const cMba = allCourses.find(c => c.code === "MBA")?.id ?? 6;
-  const cBba = allCourses.find(c => c.code === "BBA")?.id ?? 7;
-  const cBca = allCourses.find(c => c.code === "BCA")?.id ?? 9;
+  const cBtechCs = allCourses.find((c) => c.code === "BTECH-CS")?.id ?? 1;
+  const cBtechMe = allCourses.find((c) => c.code === "BTECH-ME")?.id ?? 2;
+  const cBtechEe = allCourses.find((c) => c.code === "BTECH-EE")?.id ?? 4;
+  const cDiploma = allCourses.find((c) => c.code === "DIPLOMA-ENG")?.id ?? 12;
+  const cBpharm = allCourses.find((c) => c.code === "BPHARM")?.id ?? 10;
+  const cDpharm = allCourses.find((c) => c.code === "DPHARM")?.id ?? 13;
+  const cBscNurs = allCourses.find((c) => c.code === "BSC-NURS")?.id ?? 11;
+  const cGnm = allCourses.find((c) => c.code === "GNM")?.id ?? 14;
+  const cMba = allCourses.find((c) => c.code === "MBA")?.id ?? 6;
+  const cBba = allCourses.find((c) => c.code === "BBA")?.id ?? 7;
+  const cBca = allCourses.find((c) => c.code === "BCA")?.id ?? 9;
 
-  const dCse = updatedDepts.find(d => d.code === "CSE")?.id ?? 1;
-  const dMe = updatedDepts.find(d => d.code === "ME")?.id ?? 3;
-  const dEe = updatedDepts.find(d => d.code === "EE")?.id ?? 6;
-  const dPharm = updatedDepts.find(d => d.code === "PHARM")?.id ?? 11;
-  const dNurs = updatedDepts.find(d => d.code === "NURS")?.id ?? 12;
-  const dMba = updatedDepts.find(d => d.code === "MBA")?.id ?? 7;
-  const dBba = updatedDepts.find(d => d.code === "BBA")?.id ?? 8;
-  const dBca = updatedDepts.find(d => d.code === "BCA")?.id ?? 10;
-  const dPoly = updatedDepts.find(d => d.code === "POLY")?.id ?? 1;
+  const dCse = updatedDepts.find((d) => d.code === "CSE")?.id ?? 1;
+  const dMe = updatedDepts.find((d) => d.code === "ME")?.id ?? 3;
+  const dEe = updatedDepts.find((d) => d.code === "EE")?.id ?? 6;
+  const dPharm = updatedDepts.find((d) => d.code === "PHARM")?.id ?? 11;
+  const dNurs = updatedDepts.find((d) => d.code === "NURS")?.id ?? 12;
+  const dMba = updatedDepts.find((d) => d.code === "MBA")?.id ?? 7;
+  const dBba = updatedDepts.find((d) => d.code === "BBA")?.id ?? 8;
+  const dBca = updatedDepts.find((d) => d.code === "BCA")?.id ?? 10;
+  const dPoly = updatedDepts.find((d) => d.code === "POLY")?.id ?? 1;
 
   // Categorize students
   const studentUpdates = [
@@ -119,16 +125,21 @@ async function run() {
 
   for (const su of studentUpdates) {
     console.log(`Updating patron #${su.id}...`);
-    await db.update(schema.patrons).set({
-      institutionId: su.inst,
-      courseId: su.course,
-      departmentId: su.dept,
-      academicYear: su.year,
-      semester: su.sem,
-    }).where(eq(schema.patrons.id, su.id));
+    await db
+      .update(schema.patrons)
+      .set({
+        institutionId: su.inst,
+        courseId: su.course,
+        departmentId: su.dept,
+        academicYear: su.year,
+        semester: su.sem,
+      })
+      .where(eq(schema.patrons.id, su.id));
   }
 
   console.log("Finished updating patron categorizations successfully!");
 }
 
-run().catch(console.error).then(() => process.exit(0));
+run()
+  .catch(console.error)
+  .then(() => process.exit(0));

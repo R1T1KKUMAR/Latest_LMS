@@ -202,11 +202,11 @@ export function NoDuesClient({ initialClearances, csrfToken }: NoDuesClientProps
                 <p className="text-xs text-slate-500 mt-0.5">
                   Card:{" "}
                   <span className="font-mono font-semibold">{eligibilityData.patron.cardNo}</span>
-                  {eligibilityData.patron.rollNo && (
+                  {eligibilityData.patron.employeeId && (
                     <>
                       {" "}
-                      &bull; Roll:{" "}
-                      <span className="font-mono">{eligibilityData.patron.rollNo}</span>
+                      &bull; Emp ID:{" "}
+                      <span className="font-mono">{eligibilityData.patron.employeeId}</span>
                     </>
                   )}
                   {eligibilityData.patron.departmentName && (
@@ -242,7 +242,7 @@ export function NoDuesClient({ initialClearances, csrfToken }: NoDuesClientProps
                     : "border-red-200 bg-red-50/50"
                 }`}
               >
-                <span className="text-slate-500 font-medium">Active Book Loans</span>
+                <span className="text-slate-500 font-medium">Active Issued Books</span>
                 <div
                   className={`mt-1 font-bold ${
                     eligibilityData.activeLoansCount === 0 ? "text-emerald-700" : "text-red-700"
@@ -306,7 +306,7 @@ export function NoDuesClient({ initialClearances, csrfToken }: NoDuesClientProps
               </div>
             )}
 
-            {/* Active Loans Table with Return Shortcuts */}
+            {/* Active Issued Books Table with Return Shortcuts */}
             {eligibilityData.pendingLoans.length > 0 && (
               <div className="mt-3 rounded border border-slate-200 bg-white p-3">
                 <h4 className="text-xs font-bold text-slate-800 mb-2 uppercase tracking-wider">
@@ -437,9 +437,7 @@ export function NoDuesClient({ initialClearances, csrfToken }: NoDuesClientProps
                     {c.patronCardNo}
                   </TableCell>
                   <TableCell className="text-xs text-slate-700">{c.issuedByName}</TableCell>
-                  <TableCell className="text-xs text-slate-600">
-                    {formatDate(c.issuedAt)}
-                  </TableCell>
+                  <TableCell className="text-xs text-slate-600">{formatDate(c.issuedAt)}</TableCell>
                   <TableCell>
                     <span className="inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800 uppercase">
                       {c.status}

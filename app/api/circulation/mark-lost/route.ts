@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         {
           success: false,
-          error: "Either Loan ID or Item Barcode/Accession Number is required to declare copy lost",
+          error: "Either Issue ID or Item Barcode/Accession Number is required to declare copy lost",
         },
         { status: 400 },
       );
@@ -37,33 +37,19 @@ export async function POST(request: NextRequest) {
       request.headers.get("x-real-ip") ??
       undefined;
 
-    // biome-ignore lint/suspicious/noExplicitAny: dynamic result
-    let result: any;
-    try {
-      result = await markCopyLost(
-        {
-          loanId: loanId ? Number(loanId) : undefined,
-          barcodeOrAccession: barcodeOrAccession ? barcodeOrAccession.trim() : undefined,
-          remarks: typeof remarks === "string" ? remarks.trim() : undefined,
-          referenceDate,
-        },
-        {
-          id: authContext.user.id,
-          fullName: authContext.user.fullName,
-          ipAddress,
-        },
-      );
-    } catch (e: unknown) {
-      const err = e as { message?: string };
-      if (loanId === 102 && err.message?.includes("Active loan not found")) {
-        return NextResponse.json({
-          success: true,
-          message: "Copy declared lost and charge assessed",
-          markedBy: authContext.user.fullName,
-        });
-      }
-      throw e;
-    }
+    const result = await markCopyLost(
+      {
+        loanId: loanId ? Number(loanId) : undefined,
+        barcodeOrAccession: barcodeOrAccession ? barcodeOrAccession.trim() : undefined,
+        remarks: typeof remarks === "string" ? remarks.trim() : undefined,
+        referenceDate,
+      },
+      {
+        id: authContext.user.id,
+        fullName: authContext.user.fullName,
+        ipAddress,
+      },
+    );
 
     return NextResponse.json(result, { status: 200 });
   } catch (error: unknown) {

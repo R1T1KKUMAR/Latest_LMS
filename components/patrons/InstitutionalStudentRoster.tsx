@@ -20,6 +20,9 @@ export interface StudentRosterItem {
   patronType: string;
   categoryId?: number;
   categoryName?: string;
+  libraryId?: number | null;
+  libraryCode?: string | null;
+  libraryName?: string | null;
   institutionId?: number | null;
   institutionCode?: string | null;
   institutionName?: string | null;
@@ -27,13 +30,13 @@ export interface StudentRosterItem {
   courseCode?: string | null;
   courseName?: string | null;
   departmentId?: number | null;
+  departmentCode?: string | null;
   departmentName?: string | null;
   academicYear?: number | null;
   semester?: number | null;
   section?: string | null;
   email?: string | null;
   mobile?: string | null;
-  rollNo?: string | null;
   employeeId?: string | null;
   cardExpiry?: string;
   status: string;
@@ -54,7 +57,7 @@ export const COLLEGE_CONFIGS: Record<string, CollegeInfo> = {
   RBCET: {
     code: "RBCET",
     shortName: "RBCET",
-    fullName: "RBMI College of Engineering & Technology",
+    fullName: "RBMI College of Engineering and Technology",
     badge: "bg-blue-100 text-blue-900 border-blue-200",
     border: "border-blue-400",
     bgLight: "bg-blue-50/60",
@@ -79,27 +82,27 @@ export const COLLEGE_CONFIGS: Record<string, CollegeInfo> = {
     border: "border-rose-400",
     bgLight: "bg-rose-50/60",
     icon: "🏥",
-    defaultCourses: ["B.Sc Nursing", "GNM"],
+    defaultCourses: ["B.Sc Nursing"],
   },
   RBMI: {
     code: "RBMI",
-    shortName: "RBMI (Mgmt)",
-    fullName: "RBMI College of Management",
+    shortName: "RBMI",
+    fullName: "RBMI Business School",
     badge: "bg-amber-100 text-amber-900 border-amber-200",
     border: "border-amber-400",
     bgLight: "bg-amber-50/60",
     icon: "📈",
-    defaultCourses: ["MBA", "BBA"],
+    defaultCourses: ["MBA", "BBA", "MCA", "BCA", "B.Sc", "B.Com"],
   },
   RBTTI: {
     code: "RBTTI",
-    shortName: "RBTTI / Tech",
-    fullName: "RBMI Institute of Technology & Management",
+    shortName: "RBTTI",
+    fullName: "Rakshpal Bahadur Teachers Training Institute",
     badge: "bg-purple-100 text-purple-900 border-purple-200",
     border: "border-purple-400",
     bgLight: "bg-purple-50/60",
-    icon: "💻",
-    defaultCourses: ["BCA", "MCA", "B.Ed"],
+    icon: "🎓",
+    defaultCourses: ["B.Ed"],
   },
 };
 
@@ -107,96 +110,240 @@ export function resolveCollege(patron: {
   institutionCode?: string | null;
   institutionName?: string | null;
   institutionId?: number | null;
+  courseCode?: string | null;
+  courseName?: string | null;
+  departmentCode?: string | null;
+  departmentName?: string | null;
 }): CollegeInfo {
-  const code = (patron.institutionCode || "").toUpperCase();
-  const name = (patron.institutionName || "").toUpperCase();
-  const id = patron.institutionId;
+  const code = (patron.institutionCode || "").toUpperCase().trim();
+  const name = (patron.institutionName || "").toUpperCase().trim();
 
-  if (code.includes("ENG") || code.includes("RBCET") || name.includes("ENGINEERING") || id === 1) {
+  // 1. Direct configuration match by institution code
+  if (code && COLLEGE_CONFIGS[code]) {
+    return COLLEGE_CONFIGS[code];
+  }
+
+  // 2. Name-based match for RBMI Group colleges
+  if (code.includes("RBCET") || name.includes("ENGINEERING")) {
     return COLLEGE_CONFIGS.RBCET;
   }
-  if (code.includes("PHARM") || code.includes("RBCP") || name.includes("PHARMACY") || id === 3) {
+  if (code.includes("RBCP") || name.includes("PHARMACY")) {
     return COLLEGE_CONFIGS.RBCP;
   }
-  if (code.includes("NURS") || code.includes("RBCN") || name.includes("NURSING") || id === 4) {
+  if (code.includes("RBCN") || name.includes("NURSING")) {
     return COLLEGE_CONFIGS.RBCN;
   }
-  if (code.includes("MGMT") || code.includes("RBMI") || name.includes("MANAGEMENT") || id === 2) {
-    return COLLEGE_CONFIGS.RBMI;
-  }
-  if (code.includes("TECH") || code.includes("RBTTI") || name.includes("TECHNOLOGY") || id === 5) {
+  if (code.includes("RBTTI") || name.includes("TEACHER")) {
     return COLLEGE_CONFIGS.RBTTI;
   }
+  if (code.includes("RBMI") || name.includes("BUSINESS") || name.includes("MANAGEMENT")) {
+    return COLLEGE_CONFIGS.RBMI;
+  }
+
+  // 3. Fallback inference based on course and department
+  const crsCode = (patron.courseCode || "").toUpperCase();
+  const crsName = (patron.courseName || "").toUpperCase();
+  const deptCode = (patron.departmentCode || "").toUpperCase();
+  const deptName = (patron.departmentName || "").toUpperCase();
+  const combined = `${crsCode} ${crsName} ${deptCode} ${deptName}`;
+
+  if (combined.includes("BED") || combined.includes("EDUCATION")) {
+    return COLLEGE_CONFIGS.RBTTI;
+  }
+  if (
+    combined.includes("MBA") ||
+    combined.includes("BBA") ||
+    combined.includes("MCA") ||
+    combined.includes("BCA") ||
+    combined.includes("BCOM") ||
+    combined.includes("B.COM") ||
+    (combined.includes("BSC") && !combined.includes("NURS")) ||
+    (combined.includes("B.SC") && !combined.includes("NURS"))
+  ) {
+    return COLLEGE_CONFIGS.RBMI;
+  }
+  if (combined.includes("PHARM") || combined.includes("BPHARM") || combined.includes("DPHARM")) {
+    return COLLEGE_CONFIGS.RBCP;
+  }
+  if (combined.includes("NURS")) {
+    return COLLEGE_CONFIGS.RBCN;
+  }
+  if (
+    combined.includes("BTECH") ||
+    combined.includes("DIPLOMA") ||
+    combined.includes("POLYTECHNIC") ||
+    combined.includes("CSE") ||
+    combined.includes("MECH") ||
+    combined.includes("CIVIL")
+  ) {
+    return COLLEGE_CONFIGS.RBCET;
+  }
+
+  // 4. Dynamic fallback from database fields
   return {
-    code: "OTHER",
-    shortName: patron.institutionCode || "Campus",
-    fullName: patron.institutionName || "Other Institutional Campus",
-    badge: "bg-slate-100 text-slate-800 border-slate-200",
-    border: "border-slate-300",
-    bgLight: "bg-slate-50",
+    code: patron.institutionCode || "CAMPUS",
+    shortName: patron.institutionCode || patron.institutionName || "Campus",
+    fullName: patron.institutionName || patron.institutionCode || "Institutional Campus",
+    badge: "bg-indigo-100 text-indigo-900 border-indigo-200",
+    border: "border-indigo-400",
+    bgLight: "bg-indigo-50/60",
     icon: "🏛️",
-    defaultCourses: [],
+    defaultCourses: patron.courseName ? [patron.courseName] : [],
   };
 }
 
 export function resolveCourseCategory(patron: {
   courseCode?: string | null;
   courseName?: string | null;
+  departmentCode?: string | null;
+  departmentName?: string | null;
 }): string {
   const code = (patron.courseCode || "").toUpperCase();
   const name = (patron.courseName || "").toUpperCase();
+  const deptCode = (patron.departmentCode || "").toUpperCase();
+  const deptName = (patron.departmentName || "").toUpperCase();
+  const combined = `${code} ${name} ${deptCode} ${deptName}`.toUpperCase();
 
+  // D.Pharm (Diploma in Pharmacy - RBCP)
+  if (
+    code.includes("DPHARM") ||
+    name.includes("D.PHARM") ||
+    name.includes("DIPLOMA IN PHARMACY") ||
+    deptCode.includes("DPHARM") ||
+    deptName.includes("D.PHARM")
+  ) {
+    return "D.Pharm";
+  }
+
+  // B.Pharm (Bachelor of Pharmacy - RBCP)
+  if (
+    code.includes("BPHARM") ||
+    name.includes("B.PHARM") ||
+    name.includes("BACHELOR OF PHARMACY") ||
+    deptCode.includes("BPHARM") ||
+    deptName.includes("B.PHARM")
+  ) {
+    return "B.Pharm";
+  }
+
+  // Diploma / Polytechnic (Engineering - RBCET)
   if (
     code.includes("DIPLOMA") ||
     code.includes("POLY") ||
     name.includes("DIPLOMA") ||
-    name.includes("POLYTECHNIC")
+    name.includes("POLY") ||
+    deptCode.includes("DIPLOMA") ||
+    deptCode.includes("POLY") ||
+    deptName.includes("DIPLOMA") ||
+    deptName.includes("POLY")
   ) {
     return "Diploma / Polytechnic";
   }
+
+  // B.Tech
   if (
     code.includes("BTECH") ||
     name.includes("B.TECH") ||
-    name.includes("BACHELOR OF TECHNOLOGY")
+    name.includes("BACHELOR OF TECHNOLOGY") ||
+    deptCode.includes("BTECH") ||
+    deptName.includes("B.TECH")
   ) {
     return "B.Tech";
   }
-  if (
-    code.includes("DPHARM") ||
-    name.includes("D.PHARM") ||
-    name.includes("DIPLOMA IN PHARMACY")
-  ) {
-    return "D.Pharm";
-  }
-  if (
-    code.includes("BPHARM") ||
-    name.includes("B.PHARM") ||
-    name.includes("BACHELOR OF PHARMACY")
-  ) {
-    return "B.Pharm";
-  }
+
+  // GNM
   if (code.includes("GNM") || name.includes("GNM") || name.includes("GENERAL NURSING")) {
     return "GNM";
   }
-  if (code.includes("NURS") || name.includes("NURSING") || code.includes("BSC-NURS")) {
+
+  // B.Sc Nursing
+  if (
+    combined.includes("BSC NURS") ||
+    combined.includes("B.SC NURS") ||
+    combined.includes("BSC-NURS") ||
+    combined.includes("BSCNURS") ||
+    combined.includes("NURSING")
+  ) {
     return "B.Sc Nursing";
   }
-  if (code.includes("MBA") || name.includes("MBA") || name.includes("MASTER OF BUSINESS")) {
-    return "MBA";
-  }
-  if (code.includes("BBA") || name.includes("BBA") || name.includes("BACHELOR OF BUSINESS")) {
-    return "BBA";
-  }
-  if (code.includes("MCA") || name.includes("MCA") || name.includes("MASTER OF COMPUTER")) {
-    return "MCA";
-  }
-  if (code.includes("BCA") || name.includes("BCA") || name.includes("BACHELOR OF COMPUTER")) {
-    return "BCA";
-  }
-  if (code.includes("BED") || name.includes("B.ED") || name.includes("EDUCATION")) {
+
+  // B.Ed
+  if (
+    code.includes("BED") ||
+    name.includes("B.ED") ||
+    name.includes("BACHELOR OF EDUCATION") ||
+    name.includes("EDUCATION") ||
+    deptCode.includes("BED") ||
+    deptName.includes("B.ED")
+  ) {
     return "B.Ed";
   }
-  return patron.courseName || "General Studies";
+
+  // MCA
+  if (
+    code.includes("MCA") ||
+    name.includes("MCA") ||
+    name.includes("MASTER OF COMPUTER") ||
+    deptCode.includes("MCA")
+  ) {
+    return "MCA";
+  }
+
+  // BCA
+  if (
+    code.includes("BCA") ||
+    name.includes("BCA") ||
+    name.includes("BACHELOR OF COMPUTER") ||
+    deptCode.includes("BCA")
+  ) {
+    return "BCA";
+  }
+
+  // MBA
+  if (
+    code.includes("MBA") ||
+    name.includes("MBA") ||
+    name.includes("MASTER OF BUSINESS") ||
+    deptCode.includes("MBA")
+  ) {
+    return "MBA";
+  }
+
+  // BBA
+  if (
+    code.includes("BBA") ||
+    name.includes("BBA") ||
+    name.includes("BACHELOR OF BUSINESS") ||
+    deptCode.includes("BBA")
+  ) {
+    return "BBA";
+  }
+
+  // B.Sc (General Science)
+  if (
+    code === "BSC" ||
+    code.startsWith("BSC-") ||
+    name.includes("B.SC") ||
+    name.includes("BACHELOR OF SCIENCE") ||
+    name === "BSC" ||
+    deptCode === "BSC"
+  ) {
+    return "B.Sc";
+  }
+
+  // B.Com
+  if (
+    code.includes("BCOM") ||
+    code.includes("B.COM") ||
+    name.includes("B.COM") ||
+    name.includes("BACHELOR OF COMMERCE") ||
+    name === "BCOM" ||
+    deptCode.includes("BCOM")
+  ) {
+    return "B.Com";
+  }
+
+  return patron.courseName || patron.departmentName || "General Studies";
 }
 
 interface InstitutionalStudentRosterProps {
@@ -206,6 +353,9 @@ interface InstitutionalStudentRosterProps {
   showFilters?: boolean;
   compact?: boolean;
   onSelectStudent?: (studentId: number) => void;
+  canDelete?: boolean;
+  csrfToken?: string;
+  onStudentDeleted?: () => void;
 }
 
 export function InstitutionalStudentRoster({
@@ -215,6 +365,9 @@ export function InstitutionalStudentRoster({
   showFilters = true,
   compact = false,
   onSelectStudent,
+  canDelete = false,
+  csrfToken,
+  onStudentDeleted,
 }: InstitutionalStudentRosterProps) {
   const [selectedCollege, setSelectedCollege] = useState<string>("ALL");
   const [selectedCourse, setSelectedCourse] = useState<string>("ALL");
@@ -223,6 +376,45 @@ export function InstitutionalStudentRoster({
   const [searchTerm, setSearchTerm] = useState<string>("");
   const [viewMode, setViewMode] = useState<"grouped" | "table">("grouped");
   const [selectedProfile, setSelectedProfile] = useState<StudentRosterItem | null>(null);
+
+  // Delete modal state
+  const [deleteStudentModal, setDeleteStudentModal] = useState<{
+    open: boolean;
+    student: StudentRosterItem;
+    force: boolean;
+  } | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const handleConfirmDeleteStudent = async () => {
+    if (!deleteStudentModal || !csrfToken) return;
+    setIsDeleting(true);
+    setDeleteError(null);
+    try {
+      const url = `/api/patrons/${deleteStudentModal.student.id}${deleteStudentModal.force ? "?force=true" : ""}`;
+      const res = await fetch(url, {
+        method: "DELETE",
+        headers: {
+          "x-csrf-token": csrfToken,
+        },
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Failed to delete student");
+      }
+      setDeleteStudentModal(null);
+      setSelectedProfile(null);
+      if (onStudentDeleted) {
+        onStudentDeleted();
+      } else {
+        window.location.reload();
+      }
+    } catch (err: unknown) {
+      setDeleteError(err instanceof Error ? err.message : "Failed to delete student");
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   // Filter only students (if roster contains faculty as well, keep students primary)
   const studentList = useMemo(() => {
@@ -250,36 +442,54 @@ export function InstitutionalStudentRoster({
 
   // Available Courses for currently selected college
   const availableCourses = useMemo(() => {
-    if (selectedCollege === "ALL") {
-      const set = new Set<string>();
-      for (const s of studentList) {
-        set.add(resolveCourseCategory(s));
-      }
-      return Array.from(set);
-    }
     const set = new Set<string>();
-    // Pre-populate standard programs
-    if (COLLEGE_CONFIGS[selectedCollege]) {
+    if (selectedCollege === "ALL") {
+      for (const cfg of Object.values(COLLEGE_CONFIGS)) {
+        for (const c of cfg.defaultCourses) {
+          set.add(c);
+        }
+      }
+    } else if (COLLEGE_CONFIGS[selectedCollege]) {
       for (const c of COLLEGE_CONFIGS[selectedCollege].defaultCourses) {
         set.add(c);
       }
     }
     for (const s of studentList) {
-      if (resolveCollege(s).code === selectedCollege) {
+      if (selectedCollege === "ALL" || resolveCollege(s).code === selectedCollege) {
         set.add(resolveCourseCategory(s));
       }
     }
     return Array.from(set);
   }, [studentList, selectedCollege]);
 
-  // Available Departments
+  // Available Departments dynamically filtered by selected college
   const availableDepts = useMemo(() => {
     const set = new Set<string>();
-    for (const s of studentList) {
-      if (s.departmentName) set.add(s.departmentName);
+    if (selectedCollege === "ALL") {
+      for (const cfg of Object.values(COLLEGE_CONFIGS)) {
+        for (const c of cfg.defaultCourses) {
+          set.add(c);
+        }
+      }
+      for (const s of studentList) {
+        if (s.departmentName) set.add(s.departmentName);
+        if (s.courseName) set.add(s.courseName);
+      }
+    } else {
+      if (COLLEGE_CONFIGS[selectedCollege]) {
+        for (const c of COLLEGE_CONFIGS[selectedCollege].defaultCourses) {
+          set.add(c);
+        }
+      }
+      for (const s of studentList) {
+        if (resolveCollege(s).code === selectedCollege) {
+          if (s.departmentName) set.add(s.departmentName);
+          if (s.courseName) set.add(s.courseName);
+        }
+      }
     }
     return Array.from(set);
-  }, [studentList]);
+  }, [studentList, selectedCollege]);
 
   // Filtered Students
   const filteredStudents = useMemo(() => {
@@ -290,13 +500,20 @@ export function InstitutionalStudentRoster({
       if (selectedCollege !== "ALL" && college.code !== selectedCollege) return false;
       if (selectedCourse !== "ALL" && course !== selectedCourse) return false;
       if (selectedYear !== "ALL" && String(s.academicYear) !== selectedYear) return false;
-      if (selectedDept !== "ALL" && s.departmentName !== selectedDept) return false;
+      if (selectedDept !== "ALL") {
+        const matchesDept =
+          s.departmentName === selectedDept ||
+          s.departmentCode === selectedDept ||
+          course === selectedDept ||
+          s.courseName === selectedDept ||
+          s.courseCode === selectedDept;
+        if (!matchesDept) return false;
+      }
 
       if (searchTerm.trim()) {
         const q = searchTerm.toLowerCase();
         const matches =
           s.fullName.toLowerCase().includes(q) ||
-          (s.rollNo && s.rollNo.toLowerCase().includes(q)) ||
           s.cardNo.toLowerCase().includes(q) ||
           (s.departmentName && s.departmentName.toLowerCase().includes(q)) ||
           (s.email && s.email.toLowerCase().includes(q)) ||
@@ -413,6 +630,7 @@ export function InstitutionalStudentRoster({
             onClick={() => {
               setSelectedCollege("ALL");
               setSelectedCourse("ALL");
+              setSelectedDept("ALL");
             }}
             className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 font-semibold transition border ${
               selectedCollege === "ALL"
@@ -424,7 +642,9 @@ export function InstitutionalStudentRoster({
             <span>All Colleges</span>
             <span
               className={`ml-1 rounded-full px-1.5 py-0.2 text-[10px] ${
-                selectedCollege === "ALL" ? "bg-slate-800 text-white" : "bg-slate-100 text-slate-700"
+                selectedCollege === "ALL"
+                  ? "bg-slate-800 text-white"
+                  : "bg-slate-100 text-slate-700"
               }`}
             >
               {collegeCounts.ALL}
@@ -441,6 +661,7 @@ export function InstitutionalStudentRoster({
                 onClick={() => {
                   setSelectedCollege(cfg.code);
                   setSelectedCourse("ALL");
+                  setSelectedDept("ALL");
                 }}
                 className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 font-semibold transition border ${
                   isSelected
@@ -482,7 +703,8 @@ export function InstitutionalStudentRoster({
             {availableCourses.map((crs) => {
               const isSelected = selectedCourse === crs;
               const count = studentList.filter((s) => {
-                const cMatch = selectedCollege === "ALL" || resolveCollege(s).code === selectedCollege;
+                const cMatch =
+                  selectedCollege === "ALL" || resolveCollege(s).code === selectedCollege;
                 return cMatch && resolveCourseCategory(s) === crs;
               }).length;
 
@@ -512,7 +734,7 @@ export function InstitutionalStudentRoster({
           <div className="sm:col-span-2">
             <Input
               id="student-roster-search"
-              placeholder="Search student name, Roll No, Card No, Branch..."
+              placeholder="Search student name, Card No, Branch..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
@@ -618,11 +840,10 @@ export function InstitutionalStudentRoster({
                           <Table>
                             <TableHead>
                               <tr>
-                                <TableHeaderCell>Roll No</TableHeaderCell>
+                                <TableHeaderCell>Library Card</TableHeaderCell>
                                 <TableHeaderCell>Student Name</TableHeaderCell>
                                 <TableHeaderCell>Branch / Department</TableHeaderCell>
                                 <TableHeaderCell>Year / Sem</TableHeaderCell>
-                                <TableHeaderCell>Library Card</TableHeaderCell>
                                 <TableHeaderCell>Status</TableHeaderCell>
                                 <TableHeaderCell>Action</TableHeaderCell>
                               </tr>
@@ -634,8 +855,8 @@ export function InstitutionalStudentRoster({
                                   className="hover:bg-slate-50/80 cursor-pointer transition"
                                   onClick={() => handleRowClick(student)}
                                 >
-                                  <TableCell className="font-mono text-xs font-bold text-slate-900">
-                                    {student.rollNo || "—"}
+                                  <TableCell className="font-mono text-xs font-bold text-blue-900">
+                                    {student.cardNo}
                                   </TableCell>
                                   <TableCell>
                                     <div className="font-semibold text-slate-900">
@@ -651,13 +872,8 @@ export function InstitutionalStudentRoster({
                                     {student.departmentName || "—"}
                                   </TableCell>
                                   <TableCell className="text-xs text-slate-600">
-                                    {student.academicYear
-                                      ? `Yr ${student.academicYear}`
-                                      : "—"}
+                                    {student.academicYear ? `Yr ${student.academicYear}` : "—"}
                                     {student.semester ? ` (Sem ${student.semester})` : ""}
-                                  </TableCell>
-                                  <TableCell className="font-mono text-xs text-slate-600">
-                                    {student.cardNo}
                                   </TableCell>
                                   <TableCell>
                                     <span
@@ -671,16 +887,31 @@ export function InstitutionalStudentRoster({
                                     </span>
                                   </TableCell>
                                   <TableCell>
-                                    <Button
-                                      variant="secondary"
-                                      size="sm"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleRowClick(student);
-                                      }}
-                                    >
-                                      Profile
-                                    </Button>
+                                    <div className="flex items-center gap-1.5">
+                                      <Button
+                                        variant="secondary"
+                                        size="sm"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleRowClick(student);
+                                        }}
+                                      >
+                                        Profile
+                                      </Button>
+                                      {canDelete && csrfToken && (
+                                        <Button
+                                          variant="danger"
+                                          size="sm"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setDeleteStudentModal({ open: true, student, force: false });
+                                          }}
+                                          title="Delete this student record"
+                                        >
+                                          Delete
+                                        </Button>
+                                      )}
+                                    </div>
                                   </TableCell>
                                 </TableRow>
                               ))}
@@ -703,10 +934,9 @@ export function InstitutionalStudentRoster({
               <tr>
                 <TableHeaderCell>College</TableHeaderCell>
                 <TableHeaderCell>Program &amp; Branch</TableHeaderCell>
-                <TableHeaderCell>Roll No</TableHeaderCell>
+                <TableHeaderCell>Library Card</TableHeaderCell>
                 <TableHeaderCell>Student Name</TableHeaderCell>
                 <TableHeaderCell>Year / Sem</TableHeaderCell>
-                <TableHeaderCell>Library Card</TableHeaderCell>
                 <TableHeaderCell>Status</TableHeaderCell>
                 <TableHeaderCell>Action</TableHeaderCell>
               </tr>
@@ -736,23 +966,18 @@ export function InstitutionalStudentRoster({
                         {student.departmentName || "General"}
                       </div>
                     </TableCell>
-                    <TableCell className="font-mono text-xs font-bold text-slate-900">
-                      {student.rollNo || "—"}
+                    <TableCell className="font-mono text-xs font-bold text-blue-900">
+                      {student.cardNo}
                     </TableCell>
                     <TableCell>
                       <div className="font-semibold text-slate-900">{student.fullName}</div>
                       {student.email && (
-                        <div className="text-[10px] text-slate-400 font-mono">
-                          {student.email}
-                        </div>
+                        <div className="text-[10px] text-slate-400 font-mono">{student.email}</div>
                       )}
                     </TableCell>
                     <TableCell className="text-xs text-slate-600">
                       {student.academicYear ? `Yr ${student.academicYear}` : "—"}
                       {student.semester ? ` (Sem ${student.semester})` : ""}
-                    </TableCell>
-                    <TableCell className="font-mono text-xs text-slate-600">
-                      {student.cardNo}
                     </TableCell>
                     <TableCell>
                       <span
@@ -766,16 +991,31 @@ export function InstitutionalStudentRoster({
                       </span>
                     </TableCell>
                     <TableCell>
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleRowClick(student);
-                        }}
-                      >
-                        Profile
-                      </Button>
+                      <div className="flex items-center gap-1.5">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleRowClick(student);
+                          }}
+                        >
+                          Profile
+                        </Button>
+                        {canDelete && csrfToken && (
+                          <Button
+                            variant="danger"
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDeleteStudentModal({ open: true, student, force: false });
+                            }}
+                            title="Delete this student record"
+                          >
+                            Delete
+                          </Button>
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 );
@@ -801,7 +1041,7 @@ export function InstitutionalStudentRoster({
                 <div>
                   <h3 className="font-bold text-slate-900 text-base">{selectedProfile.fullName}</h3>
                   <div className="text-xs text-slate-500 font-mono">
-                    Roll: {selectedProfile.rollNo || "N/A"} &bull; Card: {selectedProfile.cardNo}
+                    Card: {selectedProfile.cardNo}
                   </div>
                 </div>
               </div>
@@ -838,9 +1078,7 @@ export function InstitutionalStudentRoster({
                 <div>
                   <span className="text-slate-500">Year / Semester:</span>
                   <div className="font-bold text-slate-800 mt-0.5">
-                    {selectedProfile.academicYear
-                      ? `Year ${selectedProfile.academicYear}`
-                      : "N/A"}
+                    {selectedProfile.academicYear ? `Year ${selectedProfile.academicYear}` : "N/A"}
                     {selectedProfile.semester ? ` (Sem ${selectedProfile.semester})` : ""}
                   </div>
                 </div>
@@ -852,12 +1090,104 @@ export function InstitutionalStudentRoster({
                   <span className="text-slate-500">Mobile:</span>
                   <div className="text-slate-800 mt-0.5">{selectedProfile.mobile || "N/A"}</div>
                 </div>
+                <div>
+                  <span className="text-slate-500">Assigned Library:</span>
+                  <div className="font-bold text-blue-900 mt-0.5">
+                    {selectedProfile.libraryName || "Central Library"}
+                  </div>
+                </div>
               </div>
             </div>
 
-            <div className="flex justify-end pt-2">
+            <div className="flex justify-between items-center pt-2">
+              <div>
+                {canDelete && csrfToken && (
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    onClick={() => {
+                      const target = selectedProfile;
+                      setSelectedProfile(null);
+                      setDeleteStudentModal({ open: true, student: target, force: false });
+                    }}
+                  >
+                    Delete Student Record
+                  </Button>
+                )}
+              </div>
               <Button variant="outline" onClick={() => setSelectedProfile(null)}>
                 Close
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Student Confirmation Modal */}
+      {deleteStudentModal && deleteStudentModal.open && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-student-modal-title"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-xs"
+        >
+          <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl border border-slate-200 space-y-4">
+            <div className="flex items-start gap-3">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-100 text-red-600 text-lg font-bold">
+                ⚠️
+              </span>
+              <div>
+                <h3 id="delete-student-modal-title" className="text-base font-bold text-slate-900">
+                  Delete Student Record
+                </h3>
+                <p className="mt-1 text-xs text-slate-500 leading-relaxed">
+                  Are you sure you want to permanently delete student{" "}
+                  <strong className="text-slate-900">{deleteStudentModal.student.fullName}</strong>{" "}
+                  (Card:{" "}
+                  <code className="bg-slate-100 px-1 py-0.5 rounded font-mono">{deleteStudentModal.student.cardNo}</code>)?
+                </p>
+              </div>
+            </div>
+
+            {deleteError && (
+              <div className="rounded-lg bg-red-50 border border-red-200 p-2.5 text-xs text-red-700">
+                {deleteError}
+              </div>
+            )}
+
+            <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800 space-y-1.5">
+              <p className="font-semibold text-amber-900">Irreversible Action</p>
+              <p>This removes the student profile and credentials from the library database.</p>
+              <label className="flex items-center gap-2 pt-1 font-medium text-amber-950 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={deleteStudentModal.force}
+                  onChange={(e) =>
+                    setDeleteStudentModal({
+                      ...deleteStudentModal,
+                      force: e.target.checked,
+                    })
+                  }
+                  className="rounded border-amber-400 text-red-600 focus:ring-red-500"
+                />
+                Force delete if test data (releases any borrowed items back to library)
+              </label>
+            </div>
+
+            <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">
+              <Button
+                variant="outline"
+                onClick={() => setDeleteStudentModal(null)}
+                disabled={isDeleting}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="danger"
+                onClick={handleConfirmDeleteStudent}
+                isLoading={isDeleting}
+              >
+                Yes, Delete Student
               </Button>
             </div>
           </div>

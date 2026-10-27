@@ -33,15 +33,11 @@ export async function POST(request: NextRequest) {
     let updatedRule = null;
 
     if (ruleId) {
-      updatedRule = await updateCirculationRule(
-        Number(ruleId),
-        updates,
-        {
-          id: authContext.user.id,
-          fullName: authContext.user.fullName,
-          ipAddress: request.headers.get("x-forwarded-for") ?? undefined,
-        },
-      );
+      updatedRule = await updateCirculationRule(Number(ruleId), updates, {
+        id: authContext.user.id,
+        fullName: authContext.user.fullName,
+        ipAddress: request.headers.get("x-forwarded-for") ?? undefined,
+      });
     }
 
     return NextResponse.json({

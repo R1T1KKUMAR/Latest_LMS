@@ -12,10 +12,10 @@ export const registerPatronSchema = z
       error: "Patron type must be STUDENT, FACULTY, STAFF, or GUEST",
     }),
     categoryId: z.number().int().positive("Category is required"),
+    libraryId: z.number().int().positive().optional().nullable(),
     institutionId: z.number().int().positive().optional().nullable(),
     departmentId: z.number().int().positive().optional().nullable(),
     courseId: z.number().int().positive().optional().nullable(),
-    rollNo: z.string().trim().max(50).optional().nullable(),
     employeeId: z.string().trim().max(50).optional().nullable(),
     firstName: z
       .string()
@@ -37,24 +37,13 @@ export const registerPatronSchema = z
     courseEndDate: z.string().optional().nullable(),
     cardNo: z.string().trim().max(50).optional().nullable(),
     cardExpiry: z.string().optional().nullable(),
-  })
-  .refine(
-    (data) => {
-      if (data.patronType === "STUDENT") {
-        return !!data.rollNo;
-      }
-      return true;
-    },
-    {
-      message: "Roll number is required for students",
-      path: ["rollNo"],
-    },
-  );
+  });
 
 export type RegisterPatronInput = z.infer<typeof registerPatronSchema>;
 
 export const updatePatronSchema = z.object({
   categoryId: z.number().int().positive().optional(),
+  libraryId: z.number().int().positive().optional().nullable(),
   departmentId: z.number().int().positive().optional().nullable(),
   courseId: z.number().int().positive().optional().nullable(),
   firstName: z.string().trim().min(1).max(60).optional(),

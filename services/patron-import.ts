@@ -11,8 +11,9 @@ import {
 } from "@/imports/csv-parser";
 import { DB_TEXT_LIMITS, truncate, truncateWithDefault } from "@/imports/truncate";
 import { hashPassword } from "@/lib/crypto";
-import { calculateCardExpiry } from "@/lib/numbering";
+import { calculateCardExpiry, formatCardNumber } from "@/lib/numbering";
 import { recordAuditLog } from "./audit";
+import { DEFAULT_FORMATS, type ImportColumnDef } from "./import-format";
 
 // biome-ignore lint/suspicious/noExplicitAny: Generic DB instance support
 type DbInstance = any;
@@ -28,16 +29,20 @@ export type PatronImportType = "STUDENT" | "FACULTY";
 export interface PatronImportOptions {
   defaultCategoryId?: number;
   defaultInstitutionId?: number;
+  defaultLibraryId?: number;
   encoding?: string;
   fileName?: string;
+  formatColumns?: ImportColumnDef[];
 }
 
 export interface ValidatedPatronData {
   rowNumber: number;
   cardNo: string;
+  name?: string | null;
   patronType: "STUDENT" | "FACULTY" | "STAFF";
   categoryId: number;
   categoryCode: string;
+  libraryId?: number | null;
   institutionId?: number | null;
   institutionCode?: string | null;
   institutionName?: string | null;
@@ -46,7 +51,6 @@ export interface ValidatedPatronData {
   courseId?: number | null;
   courseCode?: string | null;
   courseName?: string | null;
-  rollNo?: string | null;
   employeeId?: string | null;
   firstName: string;
   middleName?: string | null;
@@ -98,7 +102,6 @@ export interface PatronImportResult {
     id: number;
     cardNo: string;
     fullName: string;
-    rollNo?: string | null;
     employeeId?: string | null;
   }>;
   skippedRows: Array<{
@@ -130,6 +133,24 @@ export function isBTechCourse(raw: string): boolean {
     clean === "BACHELOROFTECHNOLOGY" ||
     clean.startsWith("BACHELOROFTECHNOLOGY") ||
     /\bb[\.\s\-]?tech\b/i.test(raw)
+  );
+}
+
+/**
+ * Checks if a string represents Diploma / Polytechnic
+ */
+export function isDiplomaCourse(raw: string): boolean {
+  if (!raw) return false;
+  const clean = cleanAlphaNum(raw);
+  if (clean.includes("PHARM") || clean === "DPHARM") return false;
+  return (
+    clean === "DIPLOMA" ||
+    clean.startsWith("DIPLOMA") ||
+    clean === "POLYTECHNIC" ||
+    clean.startsWith("POLYTECHNIC") ||
+    clean === "POLY" ||
+    /\bdiploma\b/i.test(raw) ||
+    /\bpolytechnic\b/i.test(raw)
   );
 }
 
@@ -173,61 +194,127 @@ export async function validatePatronCsv(
     courseByCode.set(crs.code.toUpperCase(), crs);
   }
 
-  // Identify the RBCeT institution (RBMI College of Engineering and Technology / RBMI-ENG)
+  // Standard 5 Institutional Entities
   const rbcetInstitution =
     institutions.find(
       (inst: { code: string; name: string }) =>
-        inst.code.toUpperCase() === "RBMI-ENG" ||
         cleanAlphaNum(inst.code) === "RBCET" ||
-        inst.name.toUpperCase().includes("ENGINEERING") ||
-        cleanAlphaNum(inst.name).includes("RBCET"),
+        inst.code.toUpperCase() === "RBMI-ENG" ||
+        cleanAlphaNum(inst.name).includes("RBCET") ||
+        inst.name.toUpperCase().includes("ENGINEERING"),
     ) ?? institutions[0];
+
+  const rbcpInstitution = institutions.find(
+    (inst: { code: string; name: string }) =>
+      cleanAlphaNum(inst.code) === "RBCP" ||
+      inst.code.toUpperCase() === "RBMI-PHARM" ||
+      cleanAlphaNum(inst.name).includes("RBCP") ||
+      inst.name.toUpperCase().includes("PHARMACY"),
+  );
+
+  const rbcnInstitution = institutions.find(
+    (inst: { code: string; name: string }) =>
+      cleanAlphaNum(inst.code) === "RBCN" ||
+      inst.code.toUpperCase() === "RBMI-NURS" ||
+      cleanAlphaNum(inst.name).includes("RBCN") ||
+      inst.name.toUpperCase().includes("NURSING"),
+  );
+
+  const rbmiInstitution = institutions.find(
+    (inst: { code: string; name: string }) =>
+      cleanAlphaNum(inst.code) === "RBMI" ||
+      inst.code.toUpperCase() === "RBMI-MGMT" ||
+      cleanAlphaNum(inst.name).includes("RBMI") ||
+      inst.name.toUpperCase().includes("BUSINESS") ||
+      inst.name.toUpperCase().includes("MANAGEMENT"),
+  );
+
+  const rbttiInstitution = institutions.find(
+    (inst: { code: string; name: string }) =>
+      cleanAlphaNum(inst.code) === "RBTTI" ||
+      inst.code.toUpperCase() === "RBMI-TECH" ||
+      cleanAlphaNum(inst.name).includes("RBTTI") ||
+      inst.name.toUpperCase().includes("TEACHER") ||
+      inst.name.toUpperCase().includes("TEACHERS"),
+  );
 
   const resolveInstitution = (raw: string): typeof schema.institutions.$inferSelect | undefined => {
     if (!raw) return undefined;
     const norm = raw.trim().toUpperCase();
     const clean = cleanAlphaNum(raw);
 
-    // RBCET / Engineering aliases
-    if (
-      clean === "RBCET" ||
-      clean === "RBCETBAREILLY" ||
-      clean === "RBMIENG" ||
-      clean === "RBMICET" ||
-      clean === "CET" ||
-      norm.includes("ENGINEERING")
-    ) {
-      return rbcetInstitution;
-    }
-
-    // Direct code lookup
+    // 1. Direct code lookup from database
     const direct = institutionByCode.get(norm);
     if (direct) return direct;
 
-    // Cleaned code lookup
+    // 2. Cleaned code lookup from database
     for (const inst of institutions) {
       if (cleanAlphaNum(inst.code) === clean) return inst;
     }
 
-    // Name substring lookup
+    // 3. Name substring lookup from database
     for (const inst of institutions) {
       if (inst.name.toUpperCase().includes(norm) || cleanAlphaNum(inst.name).includes(clean)) {
         return inst;
       }
     }
 
-    // Common abbreviations
-    if (clean === "RBMIMGMT" || clean === "MGMT" || clean === "RBCM" || norm.includes("MANAGEMENT")) {
-      return institutions.find((i: { code: string }) => i.code.toUpperCase() === "RBMI-MGMT");
+    // 4. Aliases for institutional campuses
+    if (
+      clean === "RBCET" ||
+      clean === "RBCETBAREILLY" ||
+      clean === "RBMIENG" ||
+      clean === "RBMICET" ||
+      clean === "CET" ||
+      clean === "ENGINEERING" ||
+      norm.includes("ENGINEERING")
+    ) {
+      return rbcetInstitution;
     }
-    if (clean === "RBMIPHARM" || clean === "PHARM" || clean === "PHARMACY" || clean === "RBCP") {
-      return institutions.find((i: { code: string }) => i.code.toUpperCase() === "RBMI-PHARM");
+
+    if (
+      clean === "RBCP" ||
+      clean === "RBCPBAREILLY" ||
+      clean === "RBMIPHARM" ||
+      clean === "PHARM" ||
+      clean === "PHARMACY" ||
+      norm.includes("PHARMACY")
+    ) {
+      return rbcpInstitution;
     }
-    if (clean === "RBMINURS" || clean === "NURS" || clean === "NURSING" || clean === "RBCN") {
-      return institutions.find((i: { code: string }) => i.code.toUpperCase() === "RBMI-NURS");
+
+    if (
+      clean === "RBCN" ||
+      clean === "RBCNBAREILLY" ||
+      clean === "RBMINURS" ||
+      clean === "NURS" ||
+      clean === "NURSING" ||
+      norm.includes("NURSING")
+    ) {
+      return rbcnInstitution;
     }
-    if (clean === "RBMITECH" || clean === "ITM" || clean === "RBMITM" || clean === "TECH") {
-      return institutions.find((i: { code: string }) => i.code.toUpperCase() === "RBMI-TECH");
+
+    if (
+      clean === "RBTTI" ||
+      clean === "RBTTIBAREILLY" ||
+      clean === "TTI" ||
+      clean === "BED" ||
+      norm.includes("TEACHER") ||
+      norm.includes("TEACHERS")
+    ) {
+      return rbttiInstitution;
+    }
+
+    if (
+      clean === "RBMI" ||
+      clean === "RBMIMGMT" ||
+      clean === "MGMT" ||
+      clean === "RBCM" ||
+      clean === "RBMITECH" ||
+      norm.includes("MANAGEMENT") ||
+      norm.includes("BUSINESS")
+    ) {
+      return rbmiInstitution;
     }
 
     return undefined;
@@ -245,7 +332,13 @@ export async function validatePatronCsv(
     if (isBTechCourse(raw)) {
       const deptUpper = (rawDept || "").toUpperCase();
       // If branch is specified, try branch-specific B.Tech course
-      if (deptUpper.includes("CS") || deptUpper.includes("COMP") || deptUpper.includes("IT")) {
+      if (
+        deptUpper.includes("CS") ||
+        deptUpper.includes("COMP") ||
+        deptUpper.includes("IT") ||
+        deptUpper.includes("AI") ||
+        deptUpper.includes("AIDS")
+      ) {
         const cs = courseByCode.get("BTECH-CS");
         if (cs) return cs;
       } else if (deptUpper.includes("MECH") || deptUpper === "ME") {
@@ -254,7 +347,7 @@ export async function validatePatronCsv(
       } else if (deptUpper.includes("CIVIL") || deptUpper === "CE") {
         const ce = courseByCode.get("BTECH-CE");
         if (ce) return ce;
-      } else if (deptUpper.includes("ELECTR") || deptUpper === "EE") {
+      } else if (deptUpper.includes("ELECTR") || deptUpper === "EE" || deptUpper === "EN") {
         const ee = courseByCode.get("BTECH-EE");
         if (ee) return ee;
       } else if (deptUpper.includes("COMM") || deptUpper === "ECE" || deptUpper === "EC") {
@@ -285,6 +378,10 @@ export async function validatePatronCsv(
     }
 
     // 4. Common degree abbreviations
+    if (isDiplomaCourse(raw)) {
+      const dip = courseByCode.get("DIPLOMA");
+      if (dip) return dip;
+    }
     if (clean === "MBA" || clean === "MASTEROFBUSINESSADMINISTRATION") {
       const mba = courseByCode.get("MBA");
       if (mba) return mba;
@@ -305,9 +402,30 @@ export async function validatePatronCsv(
       const bpharm = courseByCode.get("BPHARM");
       if (bpharm) return bpharm;
     }
-    if (clean === "BSCNURS" || clean === "BSCNURSING" || clean === "BSCN") {
-      const bscnurs = courseByCode.get("BSC-NURS");
+    if (clean === "DPHARM" || clean === "DPHARMACY" || clean === "DIPLOMAINPHARMACY") {
+      const dpharm = courseByCode.get("DPHARM");
+      if (dpharm) return dpharm;
+    }
+    if (
+      clean === "BSCNURS" ||
+      clean === "BSCNURSING" ||
+      clean === "BSCN" ||
+      clean.includes("NURSING")
+    ) {
+      const bscnurs = courseByCode.get("BSCNURS") ?? courseByCode.get("BSC-NURS");
       if (bscnurs) return bscnurs;
+    }
+    if (clean === "BSC" || clean === "BACHELOROFSCIENCE" || clean === "BSCSCIENCE") {
+      const bsc = courseByCode.get("BSC");
+      if (bsc) return bsc;
+    }
+    if (clean === "BCOM" || clean === "BACHELOROFCOMMERCE" || clean === "BCOMMERCE") {
+      const bcom = courseByCode.get("BCOM");
+      if (bcom) return bcom;
+    }
+    if (clean === "BED" || clean === "BACHELOROFEDUCATION" || clean === "EDUCATION") {
+      const bed = courseByCode.get("BED");
+      if (bed) return bed;
     }
 
     // 5. Name substring or cleaned name match
@@ -341,19 +459,43 @@ export async function validatePatronCsv(
         "COMPUTERSCIENCEENGINEERING",
       ].includes(clean)
     ) {
-      return departmentByCode.get("CSE");
+      return departmentByCode.get("CSE") ?? departmentByCode.get("BTECH");
+    }
+    if (
+      [
+        "AIDS",
+        "AI",
+        "ARTIFICIALINTELLIGENCE",
+        "ARTIFICIALINTELLIGENCEANDDATASCIENCE",
+      ].includes(clean)
+    ) {
+      return (
+        departmentByCode.get("AI&DS") ??
+        departmentByCode.get("AIDS") ??
+        departmentByCode.get("CSE") ??
+        departmentByCode.get("BTECH")
+      );
     }
     if (["IT", "INFORMATIONTECHNOLOGY"].includes(clean)) {
-      return departmentByCode.get("IT");
+      return departmentByCode.get("IT") ?? departmentByCode.get("BTECH");
     }
     if (["ME", "MECH", "MECHANICAL", "MECHANICALENGINEERING"].includes(clean)) {
-      return departmentByCode.get("ME");
+      return departmentByCode.get("ME") ?? departmentByCode.get("BTECH");
     }
     if (["CE", "CIVIL", "CIVILENGINEERING"].includes(clean)) {
-      return departmentByCode.get("CE");
+      return departmentByCode.get("CE") ?? departmentByCode.get("BTECH");
     }
-    if (["EE", "ELECTRICAL", "ELECTRICALENGINEERING"].includes(clean)) {
-      return departmentByCode.get("EE");
+    if (
+      [
+        "EN",
+        "EE",
+        "ELECTRICAL",
+        "ELECTRICALENGINEERING",
+        "ELECTRICALANDELECTRONICS",
+        "ELECTRICALELECTRONICS",
+      ].includes(clean)
+    ) {
+      return departmentByCode.get("EE") ?? departmentByCode.get("BTECH");
     }
     if (
       [
@@ -364,7 +506,13 @@ export async function validatePatronCsv(
         "ELECTRONICSCOMMUNICATION",
       ].includes(clean)
     ) {
-      return departmentByCode.get("ECE");
+      return departmentByCode.get("ECE") ?? departmentByCode.get("BTECH");
+    }
+    if (isBTechCourse(raw) || clean === "BTECH") {
+      return departmentByCode.get("BTECH");
+    }
+    if (isDiplomaCourse(raw) || clean === "DIPLOMA") {
+      return departmentByCode.get("DIPLOMA");
     }
     if (["MBA", "MANAGEMENT", "MANAGEMENTSTUDIES"].includes(clean)) {
       return departmentByCode.get("MBA");
@@ -378,11 +526,26 @@ export async function validatePatronCsv(
     if (["BCA"].includes(clean)) {
       return departmentByCode.get("BCA");
     }
-    if (["PHARM", "PHARMACY", "PHARMACEUTICAL", "PHARMACEUTICALSCIENCES"].includes(clean)) {
-      return departmentByCode.get("PHARM");
+    if (["BPHARM", "BPHARMACY", "BACHELOROFPHARMACY"].includes(clean)) {
+      return departmentByCode.get("BPHARM") ?? departmentByCode.get("PHARM");
     }
-    if (["NURS", "NURSING", "NURSINGSCIENCES"].includes(clean)) {
-      return departmentByCode.get("NURS");
+    if (["DPHARM", "DPHARMACY", "DIPLOMAINPHARMACY"].includes(clean)) {
+      return departmentByCode.get("DPHARM") ?? departmentByCode.get("PHARM");
+    }
+    if (["PHARM", "PHARMACY", "PHARMACEUTICAL", "PHARMACEUTICALSCIENCES"].includes(clean)) {
+      return departmentByCode.get("BPHARM") ?? departmentByCode.get("PHARM");
+    }
+    if (["BSCNURS", "BSCNURSING", "NURS", "NURSING", "NURSINGSCIENCES"].includes(clean)) {
+      return departmentByCode.get("BSCNURS") ?? departmentByCode.get("NURS");
+    }
+    if (["BSC", "BACHELOROFSCIENCE", "BSCSCIENCE"].includes(clean)) {
+      return departmentByCode.get("BSC");
+    }
+    if (["BCOM", "BACHELOROFCOMMERCE", "BCOMMERCE"].includes(clean)) {
+      return departmentByCode.get("BCOM");
+    }
+    if (["BED", "BACHELOROFEDUCATION", "EDUCATION", "TEACHERSTRAINING"].includes(clean)) {
+      return departmentByCode.get("BED");
     }
 
     for (const d of departments) {
@@ -394,7 +557,9 @@ export async function validatePatronCsv(
     return undefined;
   };
 
-  const resolveCategory = (raw: string): typeof schema.patronCategories.$inferSelect | undefined => {
+  const resolveCategory = (
+    raw: string,
+  ): typeof schema.patronCategories.$inferSelect | undefined => {
     if (!raw) return undefined;
     const norm = raw.trim().toUpperCase();
     const clean = cleanAlphaNum(raw);
@@ -406,8 +571,41 @@ export async function validatePatronCsv(
       if (cleanAlphaNum(c.code) === clean) return c;
     }
 
-    if (isBTechCourse(raw) || clean === "BTECHSTUDENT") {
+    if (isBTechCourse(raw) || clean === "BTECHSTUDENT" || clean === "BTECH") {
       return categoryByCode.get("BTECH");
+    }
+    if (isDiplomaCourse(raw) || clean === "DIPLOMA" || clean === "DIPLOMASTUDENT") {
+      return categoryByCode.get("DIPLOMA");
+    }
+    if (clean === "MBA" || clean === "MBASTUDENT") {
+      return categoryByCode.get("MBA");
+    }
+    if (clean === "MCA" || clean === "MCASTUDENT") {
+      return categoryByCode.get("MCA");
+    }
+    if (clean === "BBA" || clean === "BBASTUDENT") {
+      return categoryByCode.get("BBA");
+    }
+    if (clean === "BCA" || clean === "BCASTUDENT") {
+      return categoryByCode.get("BCA");
+    }
+    if (clean === "BPHARM" || clean === "BPHARMSTUDENT") {
+      return categoryByCode.get("BPHARM");
+    }
+    if (clean === "DPHARM" || clean === "DPHARMSTUDENT") {
+      return categoryByCode.get("DPHARM");
+    }
+    if (clean === "NURSING" || clean === "BSCNURS" || clean === "BSCNURSING") {
+      return categoryByCode.get("NURSING");
+    }
+    if (clean === "BSC" || clean === "BSCSTUDENT") {
+      return categoryByCode.get("BSC");
+    }
+    if (clean === "BCOM" || clean === "BCOMSTUDENT") {
+      return categoryByCode.get("BCOM");
+    }
+    if (clean === "BED" || clean === "BEDSTUDENT") {
+      return categoryByCode.get("BED");
     }
 
     for (const c of categories) {
@@ -437,23 +635,19 @@ export async function validatePatronCsv(
   const existingPatrons = await db
     .select({
       cardNo: schema.patrons.cardNo,
-      rollNo: schema.patrons.rollNo,
       employeeId: schema.patrons.employeeId,
     })
     .from(schema.patrons);
 
-  const existingRollNos = new Set<string>();
   const existingEmployeeIds = new Set<string>();
   const existingCardNos = new Set<string>();
 
   for (const p of existingPatrons) {
-    if (p.rollNo) existingRollNos.add(p.rollNo.toUpperCase());
     if (p.employeeId) existingEmployeeIds.add(p.employeeId.toUpperCase());
     if (p.cardNo) existingCardNos.add(p.cardNo.toUpperCase());
   }
 
   // File-internal deduplication trackers
-  const fileRollNos = new Set<string>();
   const fileEmployeeIds = new Set<string>();
   const fileCardNos = new Set<string>();
 
@@ -462,47 +656,38 @@ export async function validatePatronCsv(
   let warnCount = 0;
   let errorCount = 0;
 
+  const formatMap = options.formatColumns
+    ? new Map(options.formatColumns.map((c) => [c.dbField, c]))
+    : null;
+
   for (const parsedRow of parsedRows) {
     const raw = parsedRow.raw;
     const rowNumber = parsedRow.rowNumber;
     const messages: string[] = [];
     let isError = false;
 
-    // --- Student Roll No / Faculty Employee ID ---
-    let rollNo: string | null = null;
-    let employeeId: string | null = null;
-
-    if (importType === "STUDENT") {
-      const rawRoll = getFieldValue(raw, "roll_no", [
-        "roll_number",
-        "roll",
-        "university_roll_no",
-        "student_id",
-      ]);
-      if (!rawRoll) {
-        messages.push("Missing required field: roll_no");
-        isError = true;
-      } else {
-        const normRoll = rawRoll.toUpperCase();
-        if (existingRollNos.has(normRoll)) {
-          messages.push(`Duplicate roll_no: "${rawRoll}" is already registered in database`);
-          isError = true;
-        } else if (fileRollNos.has(normRoll)) {
-          messages.push(`Duplicate roll_no: "${rawRoll}" appears multiple times in file`);
-          isError = true;
-        } else {
-          fileRollNos.add(normRoll);
-          rollNo = truncate(rawRoll, DB_TEXT_LIMITS.ROLL_NO);
+    const resolveField = (dbField: string, defaultAliases: string[] = []): string | undefined => {
+      if (formatMap) {
+        const knownDefaults =
+          importType === "STUDENT" ? DEFAULT_FORMATS.STUDENT : DEFAULT_FORMATS.FACULTY;
+        const isKnownField = knownDefaults.some((d) => d.dbField === dbField);
+        if (isKnownField && !formatMap.has(dbField)) {
+          return undefined;
         }
       }
-    } else {
-      // Faculty / Staff
-      const rawEmp = getFieldValue(raw, "employee_id", [
-        "emp_id",
-        "employee_code",
-        "staff_id",
-        "emp_no",
-      ]);
+      const configured = formatMap?.get(dbField);
+      const aliases = [dbField, ...defaultAliases];
+      if (configured?.csvHeader && configured.csvHeader !== dbField) {
+        aliases.unshift(configured.csvHeader);
+      }
+      return getFieldValue(raw, configured?.csvHeader || dbField, aliases);
+    };
+
+    // --- Faculty / Staff Employee ID ---
+    let employeeId: string | null = null;
+
+    if (importType === "FACULTY") {
+      const rawEmp = resolveField("employee_id", ["emp_id", "employee_code", "staff_id", "emp_no"]);
       if (!rawEmp) {
         messages.push("Missing required field: employee_id");
         isError = true;
@@ -526,38 +711,45 @@ export async function validatePatronCsv(
     let middleName: string | null = null;
     let lastName: string | null = null;
 
-    const rawFirstName = getFieldValue(raw, "first_name", ["fname"]);
-    if (rawFirstName) {
-      firstName = truncate(rawFirstName, DB_TEXT_LIMITS.NAME);
-      const rawMiddle = getFieldValue(raw, "middle_name", ["mname"]);
-      if (rawMiddle) middleName = truncate(rawMiddle, DB_TEXT_LIMITS.NAME);
-      const rawLast = getFieldValue(raw, "last_name", ["lname", "surname"]);
-      if (rawLast) lastName = truncate(rawLast, DB_TEXT_LIMITS.NAME);
+    const rawFullName = resolveField("name", [
+      "full_name",
+      "patron_name",
+      "student_name",
+      "faculty_name",
+      "studentname",
+    ]);
+
+    if (rawFullName) {
+      const split = splitFullName(rawFullName);
+      firstName = truncate(split.firstName, DB_TEXT_LIMITS.NAME);
+      if (split.middleName) middleName = truncate(split.middleName, DB_TEXT_LIMITS.NAME);
+      if (split.lastName) lastName = truncate(split.lastName, DB_TEXT_LIMITS.NAME);
     } else {
-      const rawFullName = getFieldValue(raw, "name", ["full_name", "patron_name", "student_name"]);
-      if (rawFullName) {
-        const split = splitFullName(rawFullName);
-        firstName = truncate(split.firstName, DB_TEXT_LIMITS.NAME);
-        if (split.middleName) middleName = truncate(split.middleName, DB_TEXT_LIMITS.NAME);
-        if (split.lastName) lastName = truncate(split.lastName, DB_TEXT_LIMITS.NAME);
+      const rawFirstName = resolveField("first_name", ["fname"]);
+      if (rawFirstName) {
+        firstName = truncate(rawFirstName, DB_TEXT_LIMITS.NAME);
+        const rawMiddle = resolveField("middle_name", ["mname"]);
+        if (rawMiddle) middleName = truncate(rawMiddle, DB_TEXT_LIMITS.NAME);
+        const rawLast = resolveField("last_name", ["lname", "surname"]);
+        if (rawLast) lastName = truncate(rawLast, DB_TEXT_LIMITS.NAME);
       } else {
-        messages.push("Missing required field: first_name (or name)");
+        messages.push("Missing required field: name");
         isError = true;
       }
     }
 
     // --- Card Number ---
     let cardNo: string | null = null;
-    const rawCard = getFieldValue(raw, "card_no", ["card_number", "library_card_no", "barcode"]);
+    const rawCard = resolveField("card_no", ["card_number", "library_card_no", "barcode"]);
     if (rawCard) {
       cardNo = truncate(rawCard.toUpperCase(), DB_TEXT_LIMITS.CARD_NO);
-    } else if (importType === "STUDENT" && rollNo) {
-      cardNo = rollNo;
+    } else if (importType === "STUDENT") {
+      cardNo = "[Auto-Allocated]";
     } else if (importType === "FACULTY" && employeeId) {
       cardNo = employeeId;
     }
 
-    if (cardNo) {
+    if (cardNo && cardNo !== "[Auto-Allocated]") {
       const normCard = cardNo.toUpperCase();
       if (existingCardNos.has(normCard)) {
         messages.push(`Duplicate card_no: "${cardNo}" is already assigned in database`);
@@ -571,20 +763,15 @@ export async function validatePatronCsv(
     }
 
     // --- Extract raw course, department, institute fields ---
-    const rawCourse = getFieldValue(raw, "course", [
-      "program",
-      "degree",
-      "course_name",
-      "programme",
-    ]);
-    const rawDept = getFieldValue(raw, "department", [
+    const rawCourse = resolveField("course", ["program", "degree", "course_name", "programme"]);
+    const rawDept = resolveField("department", [
       "branch",
       "dept",
       "department_name",
       "specialization",
       "stream",
     ]);
-    const rawInst = getFieldValue(raw, "institute", [
+    const rawInst = resolveField("institute", [
       "institution",
       "college",
       "college_name",
@@ -597,12 +784,7 @@ export async function validatePatronCsv(
 
     // --- Patron Category ---
     let category = defaultCategory;
-    const rawCat = getFieldValue(raw, "category", [
-      "patron_category",
-      "cat",
-      "category_name",
-      "type",
-    ]);
+    const rawCat = resolveField("category", ["patron_category", "cat", "category_name", "type"]);
     if (rawCat) {
       const found = resolveCategory(rawCat);
       if (found) {
@@ -616,13 +798,20 @@ export async function validatePatronCsv(
         messages.push(`Unknown category code "${rawCat}"`);
         isError = true;
       }
-    } else if (importType === "STUDENT" && isBTech) {
-      // Auto-assign BTECH student category if course is B.Tech
-      const btechCat =
-        categoryByCode.get("BTECH") ??
-        categories.find((c: { code: string }) => c.code.toUpperCase() === "BTECH");
-      if (btechCat) {
-        category = btechCat;
+    } else if (importType === "STUDENT") {
+      if (isBTech) {
+        // Auto-assign BTECH student category if course is B.Tech
+        const btechCat =
+          categoryByCode.get("BTECH") ??
+          categories.find((c: { code: string }) => c.code.toUpperCase() === "BTECH");
+        if (btechCat) {
+          category = btechCat;
+        }
+      } else if (rawCourse) {
+        const foundCat = resolveCategory(rawCourse);
+        if (foundCat) {
+          category = foundCat;
+        }
       }
     }
 
@@ -634,12 +823,7 @@ export async function validatePatronCsv(
     // --- Institute, Course, Department lookups ---
     let institutionId = options.defaultInstitutionId ?? null;
 
-    if (isBTech) {
-      // Requirement: "If the course is BTech, the college name will automatically be RBCeT, doesn't matter if it is mentioned or not."
-      if (rbcetInstitution) {
-        institutionId = rbcetInstitution.id;
-      }
-    } else if (rawInst) {
+    if (rawInst) {
       const found = resolveInstitution(rawInst);
       if (found) {
         institutionId = found.id;
@@ -668,9 +852,65 @@ export async function validatePatronCsv(
       }
     }
 
+    // Auto-infer institution from course / department if not explicitly set:
+    if (!institutionId) {
+      if (isBTech || (rawCourse && isDiplomaCourse(rawCourse))) {
+        institutionId = rbcetInstitution?.id ?? null;
+      } else if (
+        rawCourse &&
+        (cleanAlphaNum(rawCourse).includes("BED") || cleanAlphaNum(rawCourse).includes("EDUCATION"))
+      ) {
+        institutionId = rbttiInstitution?.id ?? null;
+      } else if (
+        rawCourse &&
+        (cleanAlphaNum(rawCourse).includes("PHARM") ||
+          cleanAlphaNum(rawCourse) === "BPHARM" ||
+          cleanAlphaNum(rawCourse) === "DPHARM")
+      ) {
+        institutionId = rbcpInstitution?.id ?? null;
+      } else if (
+        rawCourse &&
+        (cleanAlphaNum(rawCourse).includes("NURS") || cleanAlphaNum(rawCourse).includes("GNM"))
+      ) {
+        institutionId = rbcnInstitution?.id ?? null;
+      } else if (
+        rawCourse &&
+        ["MBA", "BBA", "MCA", "BCA", "BSC", "BCOM"].some((p) =>
+          cleanAlphaNum(rawCourse).startsWith(p),
+        )
+      ) {
+        institutionId = rbmiInstitution?.id ?? null;
+      } else if (courseId) {
+        const crs = courses.find((c: { id: number }) => c.id === courseId);
+        if (crs?.institutionId) {
+          institutionId = crs.institutionId;
+        }
+      } else if (departmentId) {
+        const dept = departments.find((d: { id: number }) => d.id === departmentId);
+        if (dept?.institutionId) {
+          institutionId = dept.institutionId;
+        }
+      }
+    }
+
+    // Auto-infer department from course if department not provided:
+    if (!departmentId && courseId) {
+      const crs = courses.find((c: { id: number }) => c.id === courseId);
+      if (crs) {
+        const matchDept = departments.find(
+          (d: { code: string; institutionId: number }) =>
+            d.code.toUpperCase() === crs.code.toUpperCase() ||
+            (isBTech && d.code.toUpperCase() === "BTECH"),
+        );
+        if (matchDept) {
+          departmentId = matchDept.id;
+        }
+      }
+    }
+
     // --- Academic year, semester, section ---
     let academicYear: number | null = null;
-    const rawYear = getFieldValue(raw, "year", ["academic_year"]);
+    const rawYear = resolveField("year", ["academic_year"]);
     if (rawYear) {
       const parsed = parseInt(rawYear, 10);
       if (!isNaN(parsed) && parsed >= 1 && parsed <= 5) {
@@ -679,7 +919,7 @@ export async function validatePatronCsv(
     }
 
     let semester: number | null = null;
-    const rawSem = getFieldValue(raw, "semester", ["sem"]);
+    const rawSem = resolveField("semester", ["sem"]);
     if (rawSem) {
       const parsed = parseInt(rawSem, 10);
       if (!isNaN(parsed) && parsed >= 1 && parsed <= 10) {
@@ -687,11 +927,11 @@ export async function validatePatronCsv(
       }
     }
 
-    const section = truncate(getFieldValue(raw, "section"), DB_TEXT_LIMITS.SECTION);
+    const section = truncate(resolveField("section"), DB_TEXT_LIMITS.SECTION);
 
     // --- Gender ---
     let gender: string | null = null;
-    const rawGender = getFieldValue(raw, "gender", ["sex"]);
+    const rawGender = resolveField("gender", ["sex"]);
     if (rawGender) {
       const g = rawGender.trim().toUpperCase();
       if (g.startsWith("M")) gender = "M";
@@ -700,12 +940,11 @@ export async function validatePatronCsv(
     }
 
     // --- Dates ---
-    const dob = parseCsvDate(getFieldValue(raw, "dob", ["date_of_birth"]));
+    const dob = parseCsvDate(resolveField("dob", ["date_of_birth"]));
     const admissionDate =
-      parseCsvDate(
-        getFieldValue(raw, "admission_date", ["joining_date", "date_of_joining", "doj"]),
-      ) || new Date().toISOString().split("T")[0];
-    const courseEndDate = parseCsvDate(getFieldValue(raw, "course_end_date", ["end_date"]));
+      parseCsvDate(resolveField("admission_date", ["joining_date", "date_of_joining", "doj"])) ||
+      new Date().toISOString().split("T")[0];
+    const courseEndDate = parseCsvDate(resolveField("course_end_date", ["end_date"]));
 
     // Card expiry calculation
     const validityYears = category?.cardValidityYears ?? (importType === "FACULTY" ? 5 : 4);
@@ -718,7 +957,7 @@ export async function validatePatronCsv(
 
     // --- Contact Information ---
     let mobile: string | null = null;
-    const rawMobile = getFieldValue(raw, "mobile", ["phone", "mobile_no", "contact"]);
+    const rawMobile = resolveField("mobile", ["phone", "mobile_no", "contact"]);
     if (rawMobile) {
       const cleaned = cleanPhoneNumber(rawMobile);
       mobile = truncate(cleaned.number, DB_TEXT_LIMITS.MOBILE);
@@ -728,7 +967,7 @@ export async function validatePatronCsv(
     }
 
     let email: string | null = null;
-    const rawEmail = getFieldValue(raw, "email", ["email_id"]);
+    const rawEmail = resolveField("email", ["email_id"]);
     if (rawEmail) {
       email = truncate(rawEmail.toLowerCase(), DB_TEXT_LIMITS.EMAIL);
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -737,15 +976,15 @@ export async function validatePatronCsv(
       }
     }
 
-    const address = truncate(getFieldValue(raw, "address"), DB_TEXT_LIMITS.ADDRESS);
+    const address = truncate(resolveField("address"), DB_TEXT_LIMITS.ADDRESS);
     const fatherName = truncate(
-      getFieldValue(raw, "father_name", ["fathers_name"]),
+      resolveField("father_name", ["fathers_name"]),
       DB_TEXT_LIMITS.FATHER_NAME,
     );
 
     // --- Password ---
     const plainPassword =
-      getFieldValue(raw, "password", ["initial_password"]) || (cardNo ?? "defaultPass123");
+      resolveField("password", ["initial_password"]) || (cardNo ?? "defaultPass123");
 
     // Status classification
     let status: "OK" | "WARN" | "ERROR";
@@ -772,20 +1011,19 @@ export async function validatePatronCsv(
         patronType: (category.patronType as "STUDENT" | "FACULTY" | "STAFF") ?? "STUDENT",
         categoryId: category.id,
         categoryCode: category.code,
+        libraryId: options.defaultLibraryId ?? null,
         institutionId,
-        institutionCode: resolvedInst
-          ? resolvedInst.code === "RBMI-ENG"
-            ? "RBCeT"
-            : resolvedInst.code
-          : null,
+        institutionCode: resolvedInst ? resolvedInst.code : null,
         institutionName: resolvedInst?.name ?? null,
         departmentId,
-        departmentCode: resolvedDept?.code ?? null,
+        departmentCode: resolvedDept?.code ?? rawDept ?? null,
         courseId,
-        courseCode: resolvedCrs?.code ?? (isBTech ? "BTECH" : null),
-        courseName: resolvedCrs?.name ?? (isBTech ? "Bachelor of Technology (B.Tech)" : null),
-        rollNo,
+        courseCode:
+          resolvedCrs?.code ?? (isBTech ? "BTECH" : rawCourse ? cleanAlphaNum(rawCourse) : null),
+        courseName:
+          resolvedCrs?.name ?? (isBTech ? "Bachelor of Technology (B.Tech)" : (rawCourse ?? null)),
         employeeId,
+        name: [firstName, middleName, lastName].filter(Boolean).join(" "),
         firstName,
         middleName,
         lastName,
@@ -841,6 +1079,19 @@ export async function commitPatronImport(
   const skippedRows: PatronImportResult["skippedRows"] = [];
   const cardNumbers: string[] = [];
 
+  // Create batch record initially to link all imported patrons
+  const [batch] = await db
+    .insert(schema.importBatches)
+    .values({
+      importType: preview.importType,
+      fileName: preview.fileName,
+      totalRows: preview.summary.totalRows,
+      importedRows: 0,
+      skippedRows: 0,
+      importedBy: actor.id,
+    })
+    .returning();
+
   for (const row of preview.rows) {
     if (row.status === "ERROR" || !row.data) {
       skippedRows.push({
@@ -855,18 +1106,30 @@ export async function commitPatronImport(
     try {
       // Row-level transaction isolation (NFR-R-02)
       const inserted = await db.transaction(async (tx: DbInstance) => {
-        const passwordHash = hashPassword(patronData.plainPassword);
+        let cardNo = patronData.cardNo;
+        if (!cardNo || cardNo === "[Auto-Allocated]") {
+          const seqRes: any = await tx.execute(sql`SELECT nextval('seq_card_no') as next_val`);
+          const seqRows = Array.isArray(seqRes) ? seqRes : (seqRes?.rows ?? []);
+          const nextVal = Number(seqRows[0]?.next_val ?? 1);
+          cardNo = formatCardNumber("LIB", nextVal);
+        }
+
+        const rawPassword =
+          patronData.plainPassword === "[Auto-Allocated]" || !patronData.plainPassword
+            ? cardNo
+            : patronData.plainPassword;
+        const passwordHash = hashPassword(rawPassword);
 
         const [created] = await tx
           .insert(schema.patrons)
           .values({
-            cardNo: patronData.cardNo,
+            cardNo,
+            libraryId: patronData.libraryId ?? null,
             patronType: patronData.patronType,
             categoryId: patronData.categoryId,
             institutionId: patronData.institutionId,
             departmentId: patronData.departmentId,
             courseId: patronData.courseId,
-            rollNo: patronData.rollNo,
             employeeId: patronData.employeeId,
             firstName: patronData.firstName,
             middleName: patronData.middleName,
@@ -884,9 +1147,10 @@ export async function commitPatronImport(
             courseEndDate: patronData.courseEndDate ? sql`${patronData.courseEndDate}::date` : null,
             cardExpiry: sql`${patronData.cardExpiry}::date`,
             status: "ACTIVE",
-            username: patronData.cardNo,
+            username: cardNo,
             passwordHash,
             mustChangePassword: true,
+            importBatchId: batch.id,
           })
           .returning();
 
@@ -897,7 +1161,6 @@ export async function commitPatronImport(
         id: inserted.id,
         cardNo: inserted.cardNo,
         fullName: `${inserted.firstName} ${inserted.lastName || ""}`.trim(),
-        rollNo: inserted.rollNo,
         employeeId: inserted.employeeId,
       });
       cardNumbers.push(inserted.cardNo);
@@ -910,18 +1173,14 @@ export async function commitPatronImport(
     }
   }
 
-  // Record batch metadata in import_batches
-  const [batch] = await db
-    .insert(schema.importBatches)
-    .values({
-      importType: preview.importType,
-      fileName: preview.fileName,
-      totalRows: preview.summary.totalRows,
+  // Update batch metadata with final counts
+  await db
+    .update(schema.importBatches)
+    .set({
       importedRows: importedPatrons.length,
       skippedRows: skippedRows.length,
-      importedBy: actor.id,
     })
-    .returning();
+    .where(eq(schema.importBatches.id, batch.id));
 
   // Audit entry
   await recordAuditLog(

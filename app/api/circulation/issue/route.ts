@@ -51,6 +51,8 @@ export async function POST(request: NextRequest) {
       {
         id: authContext.user.id,
         fullName: authContext.user.fullName,
+        libraryId: authContext.user.libraryId,
+        roleCode: authContext.user.roleCode,
         ipAddress,
       },
     );

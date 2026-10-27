@@ -32,6 +32,9 @@ export const libraries = pgTable("libraries", {
   accessionPrefix: varchar("accession_prefix", { length: 10 }).notNull().unique(),
   nextAccessionNo: integer("next_accession_no").notNull().default(1),
   isActive: boolean("is_active").notNull().default(true),
+  isLibrarianAvailable: boolean("is_librarian_available").notNull().default(true),
+  librarianStatusNote: text("librarian_status_note"),
+  librarianStatusUpdatedAt: timestamp("librarian_status_updated_at", { withTimezone: true }).defaultNow(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

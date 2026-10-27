@@ -44,18 +44,7 @@ export async function registerPatron(
     throw new Error(`Patron category #${parsed.categoryId} is invalid or inactive`);
   }
 
-  // 2. Check duplicate roll_no (for students) or employee_id (for faculty/staff)
-  if (parsed.rollNo) {
-    const [existing] = await db
-      .select({ id: schema.patrons.id })
-      .from(schema.patrons)
-      .where(eq(schema.patrons.rollNo, parsed.rollNo))
-      .limit(1);
-    if (existing) {
-      throw new Error(`A patron with roll number "${parsed.rollNo}" is already registered`);
-    }
-  }
-
+  // 2. Check duplicate employee_id (for faculty/staff)
   if (parsed.employeeId) {
     const [existing] = await db
       .select({ id: schema.patrons.id })
@@ -68,12 +57,10 @@ export async function registerPatron(
   }
 
   // 3. Resolve Card Number (FR-PA-02):
-  // Defaults to student roll_no or employee employee_id; else CARD_PREFIX + 6 digits from sequence
+  // Defaults to cardNo or employee employee_id; else CARD_PREFIX + 6 digits from sequence
   let cardNo: string;
   if (parsed.cardNo?.trim()) {
     cardNo = parsed.cardNo.trim().toUpperCase();
-  } else if (parsed.patronType === "STUDENT" && parsed.rollNo?.trim()) {
-    cardNo = parsed.rollNo.trim().toUpperCase();
   } else if (
     (parsed.patronType === "FACULTY" || parsed.patronType === "STAFF") &&
     parsed.employeeId?.trim()
@@ -119,12 +106,12 @@ export async function registerPatron(
     .insert(schema.patrons)
     .values({
       cardNo,
+      libraryId: parsed.libraryId ?? null,
       patronType: parsed.patronType,
       categoryId: parsed.categoryId,
       institutionId: parsed.institutionId,
       departmentId: parsed.departmentId,
       courseId: parsed.courseId,
-      rollNo: parsed.rollNo,
       employeeId: parsed.employeeId,
       firstName: parsed.firstName,
       middleName: parsed.middleName,
@@ -181,6 +168,7 @@ export async function updatePatron(
   };
 
   if (parsed.categoryId !== undefined) updateData.categoryId = parsed.categoryId;
+  if (parsed.libraryId !== undefined) updateData.libraryId = parsed.libraryId;
   if (parsed.departmentId !== undefined) updateData.departmentId = parsed.departmentId;
   if (parsed.courseId !== undefined) updateData.courseId = parsed.courseId;
   if (parsed.firstName !== undefined) updateData.firstName = parsed.firstName;
@@ -334,7 +322,9 @@ export async function getPatronById(id: number, db: DbInstance = defaultDb) {
       departmentName: schema.departments.name,
       courseId: schema.patrons.courseId,
       courseName: schema.courses.name,
-      rollNo: schema.patrons.rollNo,
+      libraryId: schema.patrons.libraryId,
+      libraryCode: schema.libraries.code,
+      libraryName: schema.libraries.name,
       employeeId: schema.patrons.employeeId,
       firstName: schema.patrons.firstName,
       middleName: schema.patrons.middleName,
@@ -361,6 +351,7 @@ export async function getPatronById(id: number, db: DbInstance = defaultDb) {
     .leftJoin(schema.institutions, eq(schema.patrons.institutionId, schema.institutions.id))
     .leftJoin(schema.departments, eq(schema.patrons.departmentId, schema.departments.id))
     .leftJoin(schema.courses, eq(schema.patrons.courseId, schema.courses.id))
+    .leftJoin(schema.libraries, eq(schema.patrons.libraryId, schema.libraries.id))
     .where(eq(schema.patrons.id, id))
     .limit(1);
 
@@ -400,6 +391,7 @@ export async function listPatrons(
   options: {
     search?: string;
     categoryId?: number;
+    libraryId?: number;
     patronType?: string;
     status?: string;
     departmentId?: number;
@@ -425,7 +417,6 @@ export async function listPatrons(
         ilike(schema.patrons.cardNo, term),
         ilike(schema.patrons.firstName, term),
         ilike(schema.patrons.lastName, term),
-        ilike(schema.patrons.rollNo, term),
         ilike(schema.patrons.employeeId, term),
         ilike(schema.patrons.email, term),
         ilike(schema.patrons.mobile, term),
@@ -435,6 +426,10 @@ export async function listPatrons(
 
   if (options.categoryId) {
     conditions.push(eq(schema.patrons.categoryId, options.categoryId));
+  }
+
+  if (options.libraryId) {
+    conditions.push(eq(schema.patrons.libraryId, options.libraryId));
   }
 
   if (options.patronType) {
@@ -450,7 +445,7 @@ export async function listPatrons(
   }
 
   if (options.institutionId) {
-    conditions.push(eq(schema.patrons.institutionId, options.institutionId));
+    conditions.push(eq(schema.departments.institutionId, options.institutionId));
   }
 
   if (options.courseId) {
@@ -484,6 +479,9 @@ export async function listPatrons(
       patronType: schema.patrons.patronType,
       categoryId: schema.patrons.categoryId,
       categoryName: schema.patronCategories.name,
+      libraryId: schema.patrons.libraryId,
+      libraryCode: schema.libraries.code,
+      libraryName: schema.libraries.name,
       institutionId: schema.patrons.institutionId,
       institutionCode: schema.institutions.code,
       institutionName: schema.institutions.name,
@@ -497,7 +495,6 @@ export async function listPatrons(
       section: schema.patrons.section,
       email: schema.patrons.email,
       mobile: schema.patrons.mobile,
-      rollNo: schema.patrons.rollNo,
       employeeId: schema.patrons.employeeId,
       cardExpiry: schema.patrons.cardExpiry,
       status: schema.patrons.status,
@@ -508,6 +505,7 @@ export async function listPatrons(
     .leftJoin(schema.institutions, eq(schema.patrons.institutionId, schema.institutions.id))
     .leftJoin(schema.courses, eq(schema.patrons.courseId, schema.courses.id))
     .leftJoin(schema.departments, eq(schema.patrons.departmentId, schema.departments.id))
+    .leftJoin(schema.libraries, eq(schema.patrons.libraryId, schema.libraries.id))
     .where(whereClause)
     .orderBy(desc(schema.patrons.createdAt))
     .limit(limit)
@@ -521,5 +519,123 @@ export async function listPatrons(
       totalCount,
       totalPages,
     },
+  };
+}
+
+/**
+ * Permanently removes/deletes a patron record (Student or Faculty/Staff).
+ * Allows admin/librarian to purge test data or wrong entries safely.
+ */
+export async function deletePatron(
+  id: number,
+  actor: Actor,
+  options: { force?: boolean } = {},
+  db: DbInstance = defaultDb,
+) {
+  // 1. Fetch patron
+  const [patron] = await db
+    .select({
+      id: schema.patrons.id,
+      cardNo: schema.patrons.cardNo,
+      firstName: schema.patrons.firstName,
+      lastName: schema.patrons.lastName,
+      patronType: schema.patrons.patronType,
+      employeeId: schema.patrons.employeeId,
+    })
+    .from(schema.patrons)
+    .where(eq(schema.patrons.id, id))
+    .limit(1);
+
+  if (!patron) {
+    throw new Error(`Patron #${id} not found`);
+  }
+
+  const patronName = `${patron.firstName} ${patron.lastName || ""}`.trim();
+
+  // 2. Check for active unreturned loans
+  const activeLoans = await db
+    .select({
+      id: schema.loans.id,
+      itemId: schema.loans.itemId,
+      barcode: schema.items.barcode,
+      title: schema.bibRecords.title,
+    })
+    .from(schema.loans)
+    .innerJoin(schema.items, eq(schema.loans.itemId, schema.items.id))
+    .innerJoin(schema.bibRecords, eq(schema.items.bibId, schema.bibRecords.id))
+    .where(and(eq(schema.loans.patronId, id), eq(schema.loans.status, "ISSUED")));
+
+  if (activeLoans.length > 0) {
+    if (!options.force) {
+      const titles = activeLoans.map((l: { title: string; barcode: string }) => `"${l.title}" (${l.barcode})`).join(", ");
+      throw new Error(
+        `Cannot delete patron "${patronName}" (${patron.cardNo}) because they currently have ${activeLoans.length} book(s) issued: ${titles}. Please return books first, or use force deletion.`,
+      );
+    }
+    // If force is enabled (e.g. purging test data), reset the item statuses back to AVAILABLE
+    for (const loan of activeLoans) {
+      await db
+        .update(schema.items)
+        .set({ status: "AVAILABLE", updatedAt: new Date() })
+        .where(eq(schema.items.id, loan.itemId));
+    }
+  }
+
+  // 3. Check for outstanding unpaid fines
+  const outstandingFines = await db
+    .select({ id: schema.fines.id, amount: schema.fines.amount })
+    .from(schema.fines)
+    .where(and(eq(schema.fines.patronId, id), eq(schema.fines.status, "OUTSTANDING")));
+
+  if (outstandingFines.length > 0 && !options.force) {
+    throw new Error(
+      `Cannot delete patron "${patronName}" (${patron.cardNo}) because they have ${outstandingFines.length} outstanding unpaid fine(s). Please clear or waive fines first, or use force deletion.`,
+    );
+  }
+
+  // 4. In a transaction, cleanly remove all related child records and the patron
+  await db.transaction(async (tx: DbInstance) => {
+    // Delete active sessions
+    await tx
+      .delete(schema.sessions)
+      .where(and(eq(schema.sessions.userType, "PATRON"), eq(schema.sessions.userId, id)));
+
+    // Delete holds
+    await tx.delete(schema.holds).where(eq(schema.holds.patronId, id));
+
+    // Delete payments
+    await tx.delete(schema.payments).where(eq(schema.payments.patronId, id));
+
+    // Delete fines
+    await tx.delete(schema.fines).where(eq(schema.fines.patronId, id));
+
+    // Delete loans
+    await tx.delete(schema.loans).where(eq(schema.loans.patronId, id));
+
+    // Delete patron record
+    await tx.delete(schema.patrons).where(eq(schema.patrons.id, id));
+  });
+
+  // 5. Record audit log
+  await recordAuditLog(
+    {
+      actorType: "STAFF",
+      actorId: actor.id,
+      actorName: actor.fullName,
+      action: "PATRON_DELETE",
+      entity: "patrons",
+      entityId: String(id),
+      details: `Permanently deleted patron ${patronName} (Card: ${patron.cardNo}, Type: ${patron.patronType}${patron.employeeId ? `, Emp: ${patron.employeeId}` : ""})`,
+      ipAddress: actor.ipAddress,
+    },
+    db,
+  );
+
+  return {
+    success: true,
+    deletedId: id,
+    cardNo: patron.cardNo,
+    fullName: patronName,
+    message: `Patron "${patronName}" (${patron.cardNo}) deleted successfully.`,
   };
 }

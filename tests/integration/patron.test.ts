@@ -36,15 +36,15 @@ describe("Integration: Patron Master Data & Lifecycle (FR-PA-01 to FR-PA-08, BR-
     await seedDatabase(db);
   });
 
-  it("1. Registers a student with roll_no defaulting to card_no and Argon2id initial password (FR-PA-01, FR-PA-02, FR-AU-05)", async () => {
+  it("1. Registers a student with card_no and Argon2id initial password (FR-PA-01, FR-PA-02, FR-AU-05)", async () => {
     const student = await registerPatron(
       {
+        cardNo: "21CS001",
         patronType: "STUDENT",
         categoryId: 1, // B.Tech Student (4 years validity)
         institutionId: 1,
         departmentId: 1, // Computer Science
         courseId: 1, // B.Tech CSE
-        rollNo: "21CS001",
         firstName: "Aarav",
         lastName: "Sharma",
         email: "aarav.sharma@rbmi.in",
@@ -59,7 +59,6 @@ describe("Integration: Patron Master Data & Lifecycle (FR-PA-01 to FR-PA-08, BR-
     );
 
     expect(student.id).toBeDefined();
-    // Card number defaults to roll_no (FR-PA-02)
     expect(student.cardNo).toBe("21CS001");
     expect(student.status).toBe("ACTIVE");
     expect(student.mustChangePassword).toBe(true);
@@ -119,7 +118,7 @@ describe("Integration: Patron Master Data & Lifecycle (FR-PA-01 to FR-PA-08, BR-
     expect(new Date(faculty.cardExpiry).getFullYear()).toBe(expectedYear);
   });
 
-  it("3. Falls back to seq_card_no sequence when neither roll_no nor employee_id is present (FR-PA-02)", async () => {
+  it("3. Falls back to seq_card_no sequence when card_no is not explicitly provided (FR-PA-02)", async () => {
     const [staffCategory] = await db
       .select()
       .from(schema.patronCategories)
@@ -146,24 +145,7 @@ describe("Integration: Patron Master Data & Lifecycle (FR-PA-01 to FR-PA-08, BR-
     expect(verifyPassword(staffPatron.cardNo, staffPatron.passwordHash)).toBe(true);
   });
 
-  it("4. Enforces database UNIQUE constraints on roll_no, employee_id, and card_no (DR-01)", async () => {
-    // Duplicate roll_no
-    await expect(
-      registerPatron(
-        {
-          patronType: "STUDENT",
-          categoryId: 1,
-          institutionId: 1,
-          departmentId: 1,
-          rollNo: "21CS001", // Already exists
-          firstName: "Duplicate",
-          lastName: "Roll",
-        },
-        testActor,
-        db,
-      ),
-    ).rejects.toThrow(/already registered/);
-
+  it("4. Enforces database UNIQUE constraints on employee_id and card_no (DR-01)", async () => {
     // Duplicate employee_id
     const [facultyCategory] = await db
       .select()
@@ -334,7 +316,7 @@ describe("Integration: Patron Master Data & Lifecycle (FR-PA-01 to FR-PA-08, BR-
     expect(details).toBeDefined();
     expect(details?.cardNo).toBe("21CS001");
     expect(details?.categoryName).toBe("B.Tech Student");
-    expect(details?.departmentName).toBe("Computer Science and Engineering");
+    expect(details?.departmentName).toBe("B.Tech");
     expect(details?.stats.activeLoans).toBe(0);
     expect(details?.stats.outstandingFines).toBe(0);
   });

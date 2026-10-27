@@ -1,10 +1,8 @@
-import { desc } from "drizzle-orm";
 import Link from "next/link";
 import { ForbiddenCard } from "@/components/auth/ForbiddenCard";
 import { PageHeader } from "@/components/layout/PageHeader";
-import { db } from "@/db";
-import * as schema from "@/db/schema";
 import { requirePageAuth } from "@/lib/auth";
+import { getCachedAuditLogs } from "@/lib/master-data-cache";
 import { formatDateTime } from "@/lib/utils";
 
 export const metadata = {
@@ -27,11 +25,7 @@ export default async function AdminAuditPage() {
     );
   }
 
-  const logs = await db
-    .select()
-    .from(schema.auditLogs)
-    .orderBy(desc(schema.auditLogs.createdAt))
-    .limit(100);
+  const logs = await getCachedAuditLogs(100);
 
   return (
     <div className="container mx-auto space-y-6 px-4 py-8">
@@ -54,7 +48,8 @@ export default async function AdminAuditPage() {
             Recent Audit Events (Last {logs.length} Records)
           </h2>
           <p className="mt-0.5 text-xs text-slate-500">
-            Logs are immutable and retain actor identities, actions performed, timestamps, and IP addresses.
+            Logs are immutable and retain actor identities, actions performed, timestamps, and IP
+            addresses.
           </p>
         </div>
 
@@ -96,9 +91,7 @@ export default async function AdminAuditPage() {
                   <td className="px-6 py-3.5 text-xs text-slate-600">
                     {log.entity || "—"} {log.entityId ? `#${log.entityId}` : ""}
                   </td>
-                  <td className="px-6 py-3.5 text-xs text-slate-500">
-                    {log.details || "—"}
-                  </td>
+                  <td className="px-6 py-3.5 text-xs text-slate-500">{log.details || "—"}</td>
                   <td className="px-6 py-3.5 font-mono text-xs text-slate-400">
                     {log.ipAddress || "127.0.0.1"}
                   </td>

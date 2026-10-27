@@ -343,3 +343,122 @@ export async function getRolesWithPermissions(db: DbInstance = defaultDb): Promi
 
   return result;
 }
+
+/**
+ * Deletes a staff user account (Super Admin action).
+ * - Primary Super Admin (id: 1 or username: 'admin') cannot be deleted.
+ * - Self-deletion is prohibited.
+ * - Cannot delete if user has associated circulation or financial records
+ *   (loans, fines, payments, import batches) to preserve database integrity.
+ *   In that case, the caller should deactivate the user instead.
+ * - If clean, all sessions are invalidated, audit log is recorded, and the user is deleted.
+ */
+export async function deleteStaffUser(
+  userId: number,
+  actor: ActorAuditContext,
+  db: DbInstance = defaultDb,
+): Promise<{ success: boolean; error?: string }> {
+  // Prevent self-deletion
+  if (userId === actor.actorId) {
+    return { success: false, error: "You cannot delete your own account" };
+  }
+
+  const existing = await getStaffUserById(userId, db);
+  if (!existing) {
+    return { success: false, error: "Staff user not found" };
+  }
+
+  // Prevent deleting primary super admin
+  if (existing.id === 1 || existing.username.toLowerCase() === "admin") {
+    return { success: false, error: "The primary Super Administrator account cannot be deleted" };
+  }
+
+  // Check foreign key dependencies
+  // 1. Loans issued
+  const hasIssuedLoans = await db
+    .select({ id: schema.loans.id })
+    .from(schema.loans)
+    .where(eq(schema.loans.issuedBy, userId))
+    .limit(1);
+  if (hasIssuedLoans.length > 0) {
+    return {
+      success: false,
+      error: `Cannot delete staff account '${existing.username}' because they have issued loans. Please deactivate the account instead.`,
+    };
+  }
+
+  // Loans returned
+  const hasReturnedLoans = await db
+    .select({ id: schema.loans.id })
+    .from(schema.loans)
+    .where(eq(schema.loans.returnedTo, userId))
+    .limit(1);
+  if (hasReturnedLoans.length > 0) {
+    return {
+      success: false,
+      error: `Cannot delete staff account '${existing.username}' because they have processed returned loans. Please deactivate the account instead.`,
+    };
+  }
+
+  // 2. Fines created
+  const hasFines = await db
+    .select({ id: schema.fines.id })
+    .from(schema.fines)
+    .where(eq(schema.fines.createdBy, userId))
+    .limit(1);
+  if (hasFines.length > 0) {
+    return {
+      success: false,
+      error: `Cannot delete staff account '${existing.username}' because they have created fine records. Please deactivate the account instead.`,
+    };
+  }
+
+  // 3. Payments received
+  const hasPayments = await db
+    .select({ id: schema.payments.id })
+    .from(schema.payments)
+    .where(eq(schema.payments.receivedBy, userId))
+    .limit(1);
+  if (hasPayments.length > 0) {
+    return {
+      success: false,
+      error: `Cannot delete staff account '${existing.username}' because they have collected fine payments. Please deactivate the account instead.`,
+    };
+  }
+
+  // 4. Import batches
+  const hasImports = await db
+    .select({ id: schema.importBatches.id })
+    .from(schema.importBatches)
+    .where(eq(schema.importBatches.importedBy, userId))
+    .limit(1);
+  if (hasImports.length > 0) {
+    return {
+      success: false,
+      error: `Cannot delete staff account '${existing.username}' because they have performed data imports. Please deactivate the account instead.`,
+    };
+  }
+
+  // Invalidate any active sessions
+  await invalidateAllUserSessions("STAFF", userId, db);
+
+  // Record audit log
+  await recordAuditLog(
+    {
+      actorType: "STAFF",
+      actorId: actor.actorId,
+      actorName: actor.actorName,
+      action: "STAFF_USER_DELETED",
+      entity: "users",
+      entityId: String(userId),
+      details: `Super Admin deleted staff account '${existing.username}' (${existing.fullName})`,
+      ipAddress: actor.ipAddress,
+    },
+    db,
+  );
+
+  // Delete user
+  await db.delete(schema.users).where(eq(schema.users.id, userId));
+
+  return { success: true };
+}

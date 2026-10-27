@@ -238,7 +238,6 @@ export const vAccessionRegister = pgView("v_accession_register", {
 export const vPatronSummary = pgView("v_patron_summary", {
   patronId: integer("patron_id"),
   cardNo: varchar("card_no", { length: 50 }),
-  rollNo: varchar("roll_no", { length: 50 }),
   employeeId: varchar("employee_id", { length: 50 }),
   fullName: text("full_name"),
   patronType: varchar("patron_type", { length: 20 }),
@@ -252,7 +251,6 @@ export const vPatronSummary = pgView("v_patron_summary", {
   SELECT 
     p.id AS patron_id,
     p.card_no,
-    p.roll_no,
     p.employee_id,
     p.first_name || ' ' || COALESCE(p.last_name, '') AS full_name,
     p.patron_type,
@@ -281,4 +279,72 @@ export const vPatronSummary = pgView("v_patron_summary", {
     WHERE status = 'OUTSTANDING'
     GROUP BY patron_id
   ) f ON p.id = f.patron_id
+`);
+
+// View 7: v_catalogue_individual_books (all 26,072 physical book copies with complete bibliographic metadata)
+export const vCatalogueIndividualBooks = pgView("v_catalogue_individual_books", {
+  copyId: integer("copy_id"),
+  accessionNo: varchar("accession_no", { length: 30 }),
+  barcode: varchar("barcode", { length: 40 }),
+  copyStatus: varchar("copy_status", { length: 20 }),
+  shelfLocation: varchar("shelf_location", { length: 100 }),
+  copyPrice: numeric("copy_price", { precision: 10, scale: 2 }),
+  bibId: integer("bib_id"),
+  title: varchar("title", { length: 500 }),
+  subtitle: varchar("subtitle", { length: 500 }),
+  authors: varchar("authors", { length: 500 }),
+  isbn: varchar("isbn", { length: 20 }),
+  edition: varchar("edition", { length: 50 }),
+  publisher: varchar("publisher", { length: 200 }),
+  pubYear: integer("pub_year"),
+  callNumber: varchar("call_number", { length: 100 }),
+  itemTypeId: integer("item_type_id"),
+  itemTypeName: varchar("item_type_name", { length: 100 }),
+  departmentId: integer("department_id"),
+  departmentName: varchar("department_name", { length: 200 }),
+  departmentCode: varchar("department_code", { length: 50 }),
+  institutionId: integer("institution_id"),
+  institutionName: varchar("institution_name", { length: 200 }),
+  institutionCode: varchar("institution_code", { length: 50 }),
+  libraryId: integer("library_id"),
+  libraryName: varchar("library_name", { length: 200 }),
+  acquisitionDate: date("acquisition_date"),
+  createdAt: timestamp("created_at", { withTimezone: true }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }),
+}).as(sql`
+  SELECT 
+    i.id AS copy_id,
+    i.accession_no,
+    i.barcode,
+    i.status AS copy_status,
+    i.location AS shelf_location,
+    i.price AS copy_price,
+    b.id AS bib_id,
+    b.title,
+    b.subtitle,
+    b.authors,
+    b.isbn,
+    b.edition,
+    b.publisher,
+    b.pub_year,
+    COALESCE(i.call_number, b.call_number) AS call_number,
+    it.id AS item_type_id,
+    it.name AS item_type_name,
+    d.id AS department_id,
+    d.name AS department_name,
+    d.code AS department_code,
+    inst.id AS institution_id,
+    inst.name AS institution_name,
+    inst.code AS institution_code,
+    lib.id AS library_id,
+    lib.name AS library_name,
+    i.acquisition_date,
+    i.created_at,
+    i.updated_at
+  FROM items i
+  JOIN bib_records b ON i.bib_id = b.id
+  JOIN item_types it ON b.item_type_id = it.id
+  LEFT JOIN departments d ON b.department_id = d.id
+  LEFT JOIN institutions inst ON d.institution_id = inst.id
+  JOIN libraries lib ON i.library_id = lib.id
 `);

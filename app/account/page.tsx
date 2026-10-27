@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 
 export const metadata = {
   title: "My Account — RBMI Central Library",
-  description: "View active book loans, title holds, fine statements, and borrowing history",
+  description: "View currently issued books, title holds, fine statements, and borrowing history",
 };
 
 export default async function AccountPage() {

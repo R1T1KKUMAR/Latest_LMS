@@ -31,34 +31,26 @@ test.describe("Circulation Desk E2E Workflows (Phase 8)", () => {
     await expect(page.locator("h2:has-text('Active Circulation Records')")).toBeVisible();
   });
 
-  test("scanner autofocusses patron card input in issue tab and moves to copy field", async ({
+  test("loads dedicated book checkout terminal with category selection", async ({
     page,
   }) => {
     await page.goto("/circulation/issue");
     await expect(page.locator("h1")).toContainText("Book Checkout");
 
-    const patronInput = page.locator("input#circ-patron-card");
-    await expect(patronInput).toBeFocused();
-
-    // Fill patron and simulate Enter key
-    await patronInput.fill("2301430100062");
-    await patronInput.press("Enter");
-
-    // Verify patron profile banner renders
-    await expect(page.locator("text=Priya Sharma")).toBeVisible();
-    await expect(page.locator("text=Active Loans")).toBeVisible();
-
-    // Verify focus automatically shifted to copy barcode input
-    const copyInput = page.locator("input#circ-accession-no");
-    await expect(copyInput).toBeFocused();
+    // Verify cascading selection card is present
+    await expect(page.locator("text=Category-Wise Dynamic Selection")).toBeVisible();
+    await expect(page.locator("select#issue-patron-type-select")).toBeVisible();
+    await expect(page.locator("button:has-text('Check Out Item')")).toBeVisible();
   });
 
-  test("loads dedicated return terminal with focused barcode input", async ({ page }) => {
+  test("loads dedicated return terminal with category selection", async ({ page }) => {
     await page.goto("/circulation/return");
     await expect(page.locator("h1")).toContainText("Book Return (Check-In) Terminal");
 
-    const returnInput = page.locator("input#circ-return-barcode");
-    await expect(returnInput).toBeFocused();
+    // Verify cascading return selection card is present
+    await expect(page.locator("text=Category-Wise Dynamic Return Selection")).toBeVisible();
+    await expect(page.locator("select#return-patron-type-select")).toBeVisible();
+    await expect(page.locator("button:has-text('Process Return')")).toBeVisible();
   });
 
   test("loads dedicated renewal terminal and declare lost terminal", async ({ page }) => {

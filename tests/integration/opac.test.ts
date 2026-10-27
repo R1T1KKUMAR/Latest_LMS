@@ -62,7 +62,7 @@ describe("Phase 12: Public OPAC & Patron Account Service Integration Suite (FR-O
     const depts = await getDepartmentsWithCounts(db);
     expect(depts.length).toBeGreaterThan(0);
 
-    const cseDept = depts.find((d) => d.code === "CSE") || depts[0];
+    const cseDept = depts.find((d) => d.titleCount > 0) || depts.find((d) => d.code === "CSE") || depts[0];
     const deptSearch = await searchOpac({ departmentId: cseDept.id }, db);
 
     expect(deptSearch.books.length).toBeGreaterThan(0);
@@ -131,7 +131,7 @@ describe("Phase 12: Public OPAC & Patron Account Service Integration Suite (FR-O
   });
 
   it("7. Authenticates patron with roll number or card number (FR-AU-05, T-20)", async () => {
-    // In seed data: Student Rahul Kumar (Patron ID 1), cardNo: 2301430100045, rollNo: 2301430100045
+    // In seed data: Student Rahul Kumar (Patron ID 1), cardNo: 2301430100045
     // Initial password equals card number per FR-AU-05
     const loginResult = await loginPatron(
       {

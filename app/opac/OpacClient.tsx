@@ -28,6 +28,8 @@ interface OpacClientProps {
   newArrivals: OpacBookItem[];
   mostBorrowed: (OpacBookItem & { borrowCount: number })[];
   departments: OpacDepartmentItem[];
+  totalCopies?: number;
+  totalTitles?: number;
   isLoggedInPatron?: boolean;
   patronName?: string;
   csrfToken?: string;
@@ -38,6 +40,8 @@ export function OpacClient({
   newArrivals,
   mostBorrowed,
   departments,
+  totalCopies = 26072,
+  totalTitles = 8944,
   isLoggedInPatron = false,
   patronName = "",
   csrfToken = "",
@@ -47,8 +51,28 @@ export function OpacClient({
   );
   const [query, setQuery] = useState("");
   const [searchField, setSearchField] = useState("all");
+  const [selectedCollegeId, setSelectedCollegeId] = useState<string>("all");
   const [selectedDeptId, setSelectedDeptId] = useState<string>("all");
   const [onlyAvailable, setOnlyAvailable] = useState(false);
+
+  // Extract unique colleges from department list
+  const collegesMap = new Map<string, { id: string; code: string; name: string }>();
+  for (const d of departments) {
+    if (d.institutionId && d.institutionCode) {
+      collegesMap.set(String(d.institutionId), {
+        id: String(d.institutionId),
+        code: d.institutionCode,
+        name: d.institutionName || d.institutionCode,
+      });
+    }
+  }
+  const colleges = Array.from(collegesMap.values());
+
+  // Filter departments for selected college
+  const availableDepts = departments.filter((d) => {
+    if (selectedCollegeId === "all") return true;
+    return String(d.institutionId) === selectedCollegeId;
+  });
 
   // Selected book for details modal
   const [selectedBookDetail, setSelectedBookDetail] = useState<OpacTitleDetail | null>(null);
@@ -65,6 +89,10 @@ export function OpacClient({
   // Filtered search results
   const filteredBooks = initialBooks.filter((b) => {
     if (onlyAvailable && b.availableCopies <= 0) return false;
+    if (selectedCollegeId !== "all") {
+      const dept = departments.find((d) => d.id === b.departmentId);
+      if (!dept || String(dept.institutionId) !== selectedCollegeId) return false;
+    }
     if (selectedDeptId !== "all" && b.departmentId !== parseInt(selectedDeptId, 10)) return false;
 
     if (!query.trim()) return true;
@@ -184,16 +212,16 @@ export function OpacClient({
       )}
 
       {/* Hero Header */}
-      <div className="rounded-2xl bg-gradient-to-r from-blue-900 via-indigo-900 to-slate-900 p-8 text-white shadow-lg">
+      <div className="rounded-2xl bg-gradient-to-r from-blue-900 via-indigo-900 to-slate-900 p-4 sm:p-8 text-white shadow-lg">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div>
             <span className="rounded bg-blue-700/80 px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wider text-blue-100">
               OPAC &bull; Campus Union Catalogue
             </span>
-            <h1 className="mt-3 text-3xl font-extrabold tracking-tight sm:text-4xl">
+            <h1 className="mt-3 text-2xl sm:text-4xl font-extrabold tracking-tight">
               Search RBMI Central Library
             </h1>
-            <p className="mt-2 text-sm text-blue-100/90 leading-relaxed max-w-2xl">
+            <p className="mt-2 text-xs sm:text-sm text-blue-100/90 leading-relaxed max-w-2xl">
               Online public catalogue for students, faculty, and research scholars across RBMI Group
               of Institutions. Search without login, browse new arrivals, and check shelf
               availability.
@@ -201,7 +229,7 @@ export function OpacClient({
           </div>
 
           {isLoggedInPatron ? (
-            <div className="rounded-xl bg-white/10 p-4 border border-white/20 backdrop-blur-xs text-right">
+            <div className="rounded-xl bg-white/10 p-3 sm:p-4 border border-white/20 backdrop-blur-xs text-left sm:text-right">
               <span className="text-xs text-blue-200">Signed in as Patron</span>
               <div className="text-sm font-bold text-white">{patronName || "My Account"}</div>
               <Link
@@ -212,7 +240,7 @@ export function OpacClient({
               </Link>
             </div>
           ) : (
-            <div className="rounded-xl bg-white/10 p-4 border border-white/20 backdrop-blur-xs text-right">
+            <div className="rounded-xl bg-white/10 p-3 sm:p-4 border border-white/20 backdrop-blur-xs text-left sm:text-right">
               <span className="text-xs text-blue-200">Registered Patron?</span>
               <div className="text-sm font-bold text-white">Borrow &amp; Reserve Books</div>
               <Link
@@ -225,23 +253,23 @@ export function OpacClient({
           )}
         </div>
 
-        {/* Discovery Navigation Tabs */}
-        <div className="mt-8 flex flex-wrap gap-2 border-t border-white/20 pt-4">
+        {/* Discovery Navigation Tabs (Horizontally scrollable on mobile) */}
+        <div className="mt-6 sm:mt-8 flex overflow-x-auto no-scrollbar gap-2 border-t border-white/20 pt-4 pb-1">
           <button
             type="button"
             onClick={() => setActiveTab("search")}
-            className={`rounded-lg px-4 py-2 text-xs font-bold transition ${
+            className={`flex-shrink-0 whitespace-nowrap rounded-lg px-3.5 py-2 text-xs font-bold transition ${
               activeTab === "search"
                 ? "bg-white text-blue-950 shadow-md"
                 : "bg-white/10 text-white hover:bg-white/20"
             }`}
           >
-            🔍 Search Catalogue ({initialBooks.length})
+            🔍 Search Catalogue ({totalCopies.toLocaleString()} Books)
           </button>
           <button
             type="button"
             onClick={() => setActiveTab("new")}
-            className={`rounded-lg px-4 py-2 text-xs font-bold transition ${
+            className={`flex-shrink-0 whitespace-nowrap rounded-lg px-3.5 py-2 text-xs font-bold transition ${
               activeTab === "new"
                 ? "bg-white text-blue-950 shadow-md"
                 : "bg-white/10 text-white hover:bg-white/20"
@@ -252,7 +280,7 @@ export function OpacClient({
           <button
             type="button"
             onClick={() => setActiveTab("popular")}
-            className={`rounded-lg px-4 py-2 text-xs font-bold transition ${
+            className={`flex-shrink-0 whitespace-nowrap rounded-lg px-3.5 py-2 text-xs font-bold transition ${
               activeTab === "popular"
                 ? "bg-white text-blue-950 shadow-md"
                 : "bg-white/10 text-white hover:bg-white/20"
@@ -263,7 +291,7 @@ export function OpacClient({
           <button
             type="button"
             onClick={() => setActiveTab("departments")}
-            className={`rounded-lg px-4 py-2 text-xs font-bold transition ${
+            className={`flex-shrink-0 whitespace-nowrap rounded-lg px-3.5 py-2 text-xs font-bold transition ${
               activeTab === "departments"
                 ? "bg-white text-blue-950 shadow-md"
                 : "bg-white/10 text-white hover:bg-white/20"
@@ -280,21 +308,21 @@ export function OpacClient({
           {/* Search Inputs */}
           <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-xs">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-12">
-              <div className="sm:col-span-5">
+              <div className="sm:col-span-4">
                 <Input
                   id="opac-search-input"
-                  placeholder="Search by title, author, keyword, ISBN, call number, or accession..."
+                  placeholder="Search by title, author, keyword, ISBN..."
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                 />
               </div>
-              <div className="sm:col-span-3">
+              <div className="sm:col-span-2">
                 <Select
                   id="opac-field-select"
                   value={searchField}
                   onChange={(e) => setSearchField(e.target.value)}
                   options={[
-                    { value: "all", label: "All Search Fields" },
+                    { value: "all", label: "All Fields" },
                     { value: "title", label: "Title & Subtitle" },
                     { value: "author", label: "Authors" },
                     { value: "isbn", label: "ISBN" },
@@ -304,14 +332,37 @@ export function OpacClient({
                   ]}
                 />
               </div>
-              <div className="sm:col-span-4">
+              <div className="sm:col-span-3">
+                <Select
+                  id="opac-college-select"
+                  value={selectedCollegeId}
+                  onChange={(e) => {
+                    setSelectedCollegeId(e.target.value);
+                    setSelectedDeptId("all");
+                  }}
+                  options={[
+                    { value: "all", label: "🏛️ All Colleges" },
+                    ...colleges.map((c) => ({
+                      value: c.id,
+                      label: `${c.code} — ${c.name}`,
+                    })),
+                  ]}
+                />
+              </div>
+              <div className="sm:col-span-3">
                 <Select
                   id="opac-dept-select"
                   value={selectedDeptId}
                   onChange={(e) => setSelectedDeptId(e.target.value)}
                   options={[
-                    { value: "all", label: "All Academic Departments" },
-                    ...departments.map((d) => ({
+                    {
+                      value: "all",
+                      label:
+                        selectedCollegeId !== "all"
+                          ? `📚 All ${collegesMap.get(selectedCollegeId)?.code} Programs`
+                          : "📚 All Academic Departments",
+                    },
+                    ...availableDepts.map((d) => ({
                       value: String(d.id),
                       label: `${d.name} (${d.titleCount} titles)`,
                     })),
@@ -348,7 +399,7 @@ export function OpacClient({
             </div>
           </div>
 
-          {/* Results Table */}
+          {/* Results Display */}
           {filteredBooks.length === 0 ? (
             <EmptyState
               title="No Matching Library Materials"
@@ -360,92 +411,177 @@ export function OpacClient({
               icon="🔍"
             />
           ) : (
-            <div className="rounded-xl border border-slate-200 bg-white shadow-xs overflow-hidden">
-              <Table>
-                <TableHead>
-                  <tr>
-                    <TableHeaderCell>Title &amp; Subtitle</TableHeaderCell>
-                    <TableHeaderCell>Authors</TableHeaderCell>
-                    <TableHeaderCell>Edition / Year</TableHeaderCell>
-                    <TableHeaderCell>Call Number</TableHeaderCell>
-                    <TableHeaderCell>Copy Availability</TableHeaderCell>
-                    <TableHeaderCell>Actions</TableHeaderCell>
-                  </tr>
-                </TableHead>
-                <TableBody>
-                  {filteredBooks.map((book) => {
-                    const isAvailable = book.availableCopies > 0;
-                    return (
-                      <TableRow key={book.id}>
-                        <TableCell>
-                          <Link
-                            href={`/opac/title/${book.id}`}
-                            className="text-left font-bold text-blue-950 hover:underline block"
-                          >
-                            {book.title}
-                          </Link>
-                          {book.subtitle && (
-                            <span className="text-xs text-slate-500 block truncate max-w-sm">
-                              {book.subtitle}
-                            </span>
-                          )}
-                          <div className="mt-1 flex flex-wrap gap-2 text-[10px] text-slate-400">
-                            {book.isbn && <span>ISBN: {book.isbn}</span>}
-                            {book.departmentName && (
-                              <span className="rounded bg-slate-100 px-1.5 py-0.2 text-slate-600">
-                                {book.departmentName}
+            <>
+              {/* Mobile Card List (< sm) */}
+              <div className="space-y-3 sm:hidden">
+                {filteredBooks.map((book) => {
+                  const isAvailable = book.availableCopies > 0;
+                  return (
+                    <div
+                      key={book.id}
+                      className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs space-y-2.5"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <Link
+                          href={`/opac/title/${book.id}`}
+                          className="font-bold text-sm text-blue-950 hover:underline leading-snug line-clamp-2"
+                        >
+                          {book.title}
+                        </Link>
+                        <span
+                          className={`flex-shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                            isAvailable
+                              ? "bg-emerald-100 text-emerald-800"
+                              : "bg-amber-100 text-amber-800"
+                          }`}
+                        >
+                          {isAvailable ? "Available" : "Checked Out"}
+                        </span>
+                      </div>
+
+                      {book.subtitle && (
+                        <p className="text-xs text-slate-500 line-clamp-1">{book.subtitle}</p>
+                      )}
+
+                      <p className="text-xs text-slate-700">{book.authors}</p>
+
+                      <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+                        {book.institutionCode && (
+                          <span className="rounded bg-blue-50 text-blue-900 font-bold px-1.5 py-0.5 border border-blue-200">
+                            🏛️ {book.institutionCode}
+                          </span>
+                        )}
+                        {book.departmentName && (
+                          <span className="rounded bg-emerald-50 text-emerald-900 font-bold px-1.5 py-0.5 border border-emerald-200">
+                            📚 {book.departmentName}
+                          </span>
+                        )}
+                        {book.callNumber && (
+                          <span className="font-mono text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
+                            Call: {book.callNumber}
+                          </span>
+                        )}
+                        <span className="text-slate-500 font-medium">
+                          {book.availableCopies} of {book.totalCopies} on shelf
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          className="flex-1"
+                          onClick={() => handleOpenDetails(book)}
+                        >
+                          Details
+                        </Button>
+                        <Button
+                          variant={isAvailable ? "outline" : "primary"}
+                          size="sm"
+                          className="flex-1"
+                          onClick={() => setHoldTarget(book)}
+                        >
+                          Reserve
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Desktop Table (>= sm) */}
+              <div className="hidden sm:block rounded-xl border border-slate-200 bg-white shadow-xs overflow-hidden">
+                <Table>
+                  <TableHead>
+                    <tr>
+                      <TableHeaderCell>Title &amp; Subtitle</TableHeaderCell>
+                      <TableHeaderCell>Authors</TableHeaderCell>
+                      <TableHeaderCell>Edition / Year</TableHeaderCell>
+                      <TableHeaderCell>Call Number</TableHeaderCell>
+                      <TableHeaderCell>Copy Availability</TableHeaderCell>
+                      <TableHeaderCell>Actions</TableHeaderCell>
+                    </tr>
+                  </TableHead>
+                  <TableBody>
+                    {filteredBooks.map((book) => {
+                      const isAvailable = book.availableCopies > 0;
+                      return (
+                        <TableRow key={book.id}>
+                          <TableCell>
+                            <Link
+                              href={`/opac/title/${book.id}`}
+                              className="text-left font-bold text-blue-950 hover:underline block"
+                            >
+                              {book.title}
+                            </Link>
+                            {book.subtitle && (
+                              <span className="text-xs text-slate-500 block truncate max-w-sm">
+                                {book.subtitle}
                               </span>
                             )}
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-xs text-slate-700">{book.authors}</TableCell>
-                        <TableCell className="text-xs text-slate-600">
-                          {book.edition ? `Ed. ${book.edition}` : ""}{" "}
-                          {book.pubYear ? `(${book.pubYear})` : "—"}
-                        </TableCell>
-                        <TableCell className="font-mono text-xs text-slate-600">
-                          {book.callNumber || "—"}
-                        </TableCell>
-                        <TableCell>
-                          <div className="space-y-0.5">
-                            <span
-                              className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                                isAvailable
-                                  ? "bg-emerald-100 text-emerald-800"
-                                  : "bg-amber-100 text-amber-800"
-                              }`}
-                            >
-                              {isAvailable ? "Available" : "Checked Out"}
-                            </span>
-                            <div className="text-[10px] text-slate-500">
-                              {book.availableCopies} of {book.totalCopies} on shelf
+                            <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px]">
+                              {book.institutionCode && (
+                                <span className="rounded bg-blue-100 text-blue-900 font-bold px-1.5 py-0.5 border border-blue-200">
+                                  🏛️ {book.institutionCode}
+                                </span>
+                              )}
+                              {book.departmentName && (
+                                <span className="rounded bg-emerald-100 text-emerald-900 font-bold px-1.5 py-0.5 border border-emerald-200">
+                                  📚 {book.departmentName}
+                                </span>
+                              )}
+                              {book.isbn && <span className="text-slate-400">ISBN: {book.isbn}</span>}
                             </div>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center space-x-2">
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              onClick={() => handleOpenDetails(book)}
-                            >
-                              Details
-                            </Button>
-                            <Button
-                              variant={isAvailable ? "outline" : "primary"}
-                              size="sm"
-                              onClick={() => setHoldTarget(book)}
-                            >
-                              Reserve
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            </div>
+                          </TableCell>
+                          <TableCell className="text-xs text-slate-700">{book.authors}</TableCell>
+                          <TableCell className="text-xs text-slate-600">
+                            {book.edition ? `Ed. ${book.edition}` : ""}{" "}
+                            {book.pubYear ? `(${book.pubYear})` : "—"}
+                          </TableCell>
+                          <TableCell className="font-mono text-xs text-slate-600">
+                            {book.callNumber || "—"}
+                          </TableCell>
+                          <TableCell>
+                            <div className="space-y-0.5">
+                              <span
+                                className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                  isAvailable
+                                    ? "bg-emerald-100 text-emerald-800"
+                                    : "bg-amber-100 text-amber-800"
+                                }`}
+                              >
+                                {isAvailable ? "Available" : "Checked Out"}
+                              </span>
+                              <div className="text-[10px] text-slate-500">
+                                {book.availableCopies} of {book.totalCopies} on shelf
+                              </div>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center space-x-2">
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => handleOpenDetails(book)}
+                              >
+                                Details
+                              </Button>
+                              <Button
+                                variant={isAvailable ? "outline" : "primary"}
+                                size="sm"
+                                onClick={() => setHoldTarget(book)}
+                              >
+                                Reserve
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            </>
           )}
         </div>
       )}
@@ -541,90 +677,157 @@ export function OpacClient({
             <h2 className="text-sm font-bold text-indigo-950">Most Circulated Library Materials</h2>
             <p className="text-xs text-indigo-800">
               High-demand textbooks, reference titles, and technical manuals with highest patron
-              loan counts.
+              borrowing counts.
             </p>
           </div>
 
           {mostBorrowed.length === 0 ? (
             <EmptyState
               title="No Circulation Records"
-              description="Circulation loan trends will appear once books are borrowed and returned."
+              description="Circulation trends will appear once books are borrowed and returned."
               icon="📈"
             />
           ) : (
-            <div className="rounded-xl border border-slate-200 bg-white shadow-xs overflow-hidden">
-              <Table>
-                <TableHead>
-                  <tr>
-                    <TableHeaderCell>Rank / Popularity</TableHeaderCell>
-                    <TableHeaderCell>Title &amp; Authors</TableHeaderCell>
-                    <TableHeaderCell>Department</TableHeaderCell>
-                    <TableHeaderCell>Availability</TableHeaderCell>
-                    <TableHeaderCell>Actions</TableHeaderCell>
-                  </tr>
-                </TableHead>
-                <TableBody>
-                  {mostBorrowed.map((book, index) => {
-                    const isAvailable = book.availableCopies > 0;
-                    return (
-                      <TableRow key={book.id}>
-                        <TableCell>
-                          <div className="flex items-center space-x-2">
-                            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-blue-900 text-xs font-bold text-white shadow-xs">
-                              #{index + 1}
-                            </span>
-                            <span className="text-xs font-semibold text-slate-700">
-                              {book.borrowCount} checkouts
-                            </span>
-                          </div>
-                        </TableCell>
-                        <TableCell>
+            <>
+              {/* Mobile Card View (< sm) */}
+              <div className="space-y-3 sm:hidden">
+                {mostBorrowed.map((book, index) => {
+                  const isAvailable = book.availableCopies > 0;
+                  return (
+                    <div
+                      key={book.id}
+                      className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs space-y-2.5"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center space-x-2">
+                          <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-blue-900 text-[11px] font-bold text-white shadow-xs">
+                            #{index + 1}
+                          </span>
                           <Link
                             href={`/opac/title/${book.id}`}
-                            className="font-bold text-blue-950 hover:underline block"
+                            className="font-bold text-sm text-blue-950 hover:underline leading-snug line-clamp-2"
                           >
                             {book.title}
                           </Link>
-                          <span className="text-xs text-slate-600 block">{book.authors}</span>
-                        </TableCell>
-                        <TableCell className="text-xs text-slate-600">
-                          {book.departmentName || "General"}
-                        </TableCell>
-                        <TableCell>
-                          <span
-                            className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                              isAvailable
-                                ? "bg-emerald-100 text-emerald-800"
-                                : "bg-amber-100 text-amber-800"
-                            }`}
-                          >
-                            {isAvailable ? `${book.availableCopies} on shelf` : "Checked Out"}
-                          </span>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex space-x-2">
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              onClick={() => handleOpenDetails(book)}
+                        </div>
+                        <span
+                          className={`flex-shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                            isAvailable
+                              ? "bg-emerald-100 text-emerald-800"
+                              : "bg-amber-100 text-amber-800"
+                          }`}
+                        >
+                          {isAvailable ? `${book.availableCopies} on shelf` : "Checked Out"}
+                        </span>
+                      </div>
+
+                      <p className="text-xs text-slate-600">{book.authors}</p>
+
+                      <div className="flex items-center justify-between text-xs text-slate-500 pt-1">
+                        <span>{book.departmentName || "General"}</span>
+                        <span className="font-semibold text-blue-950 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">
+                          {book.borrowCount} checkouts
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          className="flex-1"
+                          onClick={() => handleOpenDetails(book)}
+                        >
+                          Details
+                        </Button>
+                        <Button
+                          variant={isAvailable ? "outline" : "primary"}
+                          size="sm"
+                          className="flex-1"
+                          onClick={() => setHoldTarget(book)}
+                        >
+                          Reserve
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Desktop Table (>= sm) */}
+              <div className="hidden sm:block rounded-xl border border-slate-200 bg-white shadow-xs overflow-hidden">
+                <Table>
+                  <TableHead>
+                    <tr>
+                      <TableHeaderCell>Rank / Popularity</TableHeaderCell>
+                      <TableHeaderCell>Title &amp; Authors</TableHeaderCell>
+                      <TableHeaderCell>Department</TableHeaderCell>
+                      <TableHeaderCell>Availability</TableHeaderCell>
+                      <TableHeaderCell>Actions</TableHeaderCell>
+                    </tr>
+                  </TableHead>
+                  <TableBody>
+                    {mostBorrowed.map((book, index) => {
+                      const isAvailable = book.availableCopies > 0;
+                      return (
+                        <TableRow key={book.id}>
+                          <TableCell>
+                            <div className="flex items-center space-x-2">
+                              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-blue-900 text-xs font-bold text-white shadow-xs">
+                                #{index + 1}
+                              </span>
+                              <span className="text-xs font-semibold text-slate-700">
+                                {book.borrowCount} checkouts
+                              </span>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <Link
+                              href={`/opac/title/${book.id}`}
+                              className="font-bold text-blue-950 hover:underline block"
                             >
-                              Details
-                            </Button>
-                            <Button
-                              variant={isAvailable ? "outline" : "primary"}
-                              size="sm"
-                              onClick={() => setHoldTarget(book)}
+                              {book.title}
+                            </Link>
+                            <span className="text-xs text-slate-600 block">{book.authors}</span>
+                          </TableCell>
+                          <TableCell className="text-xs text-slate-600">
+                            {book.departmentName || "General"}
+                          </TableCell>
+                          <TableCell>
+                            <span
+                              className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                isAvailable
+                                  ? "bg-emerald-100 text-emerald-800"
+                                  : "bg-amber-100 text-amber-800"
+                              }`}
                             >
-                              Reserve
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            </div>
+                              {isAvailable ? `${book.availableCopies} on shelf` : "Checked Out"}
+                            </span>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex space-x-2">
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => handleOpenDetails(book)}
+                              >
+                                Details
+                              </Button>
+                              <Button
+                                variant={isAvailable ? "outline" : "primary"}
+                                size="sm"
+                                onClick={() => setHoldTarget(book)}
+                              >
+                                Reserve
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            </>
           )}
         </div>
       )}
@@ -635,8 +838,9 @@ export function OpacClient({
           <div className="rounded-xl border border-slate-200 bg-white p-4">
             <h2 className="text-sm font-bold text-slate-900">Academic Department Collections</h2>
             <p className="text-xs text-slate-500">
-              Browse holdings classified by institute departments. Select any department to filter
-              catalogue materials.
+              Browse {totalCopies.toLocaleString()} physical volumes classified across{" "}
+              {departments.length} institute departments. Select any department to filter catalogue
+              materials.
             </p>
           </div>
 

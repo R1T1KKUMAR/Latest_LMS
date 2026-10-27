@@ -123,5 +123,30 @@ describe("CSV Parser & Utility Functions Unit Suite", () => {
       const nameVal = getFieldValue(rows[0].raw, "name", ["full_name"]);
       expect(nameVal).toBe("Rohan Sharma");
     });
+
+    it("matches column variations across punctuation, casing, and underscores (e.g. B.Tech, b_tech, btech, BTECH)", () => {
+      // 1. Column header is B.Tech, lookup by canonical key b_tech or alias btech
+      const csv1 = `B.Tech,Title\nCS,Operating Systems`;
+      const rows1 = parseCsvText(csv1);
+      expect(getFieldValue(rows1[0].raw, "btech")).toBe("CS");
+      expect(getFieldValue(rows1[0].raw, "b_tech")).toBe("CS");
+      expect(getFieldValue(rows1[0].raw, "course", ["b_tech"])).toBe("CS");
+      expect(getFieldValue(rows1[0].raw, "course", ["BTECH"])).toBe("CS");
+      expect(getFieldValue(rows1[0].raw, "course", ["B.Tech"])).toBe("CS");
+
+      // 2. Column header is b_tech, lookup by B.Tech or btech
+      const csv2 = `b_tech,Title\nIT,Database Systems`;
+      const rows2 = parseCsvText(csv2);
+      expect(getFieldValue(rows2[0].raw, "btech")).toBe("IT");
+      expect(getFieldValue(rows2[0].raw, "B.Tech")).toBe("IT");
+      expect(getFieldValue(rows2[0].raw, "BTECH")).toBe("IT");
+
+      // 3. Column header is BTECH, lookup by b_tech or B.Tech
+      const csv3 = `BTECH,Title\nECE,Signals`;
+      const rows3 = parseCsvText(csv3);
+      expect(getFieldValue(rows3[0].raw, "b_tech")).toBe("ECE");
+      expect(getFieldValue(rows3[0].raw, "B.Tech")).toBe("ECE");
+      expect(getFieldValue(rows3[0].raw, "btech")).toBe("ECE");
+    });
   });
 });

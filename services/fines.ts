@@ -65,7 +65,6 @@ export interface ReceiptDetails {
     id: number;
     name: string;
     cardNo: string;
-    rollNo: string | null;
     employeeId: string | null;
     patronType: string;
     mobile: string | null;
@@ -111,6 +110,20 @@ export async function generateReceiptNumber(
   return `${prefix}-${year}-${paddedSeq}`;
 }
 
+let cachedDefaultFines: {
+  limit: number;
+  data: {
+    fines: FineListItem[];
+    totalCount: number;
+    totalOutstandingAmount: number;
+  };
+  cachedAt: number;
+} | null = null;
+
+export function invalidateFinesCache() {
+  cachedDefaultFines = null;
+}
+
 /**
  * Lists fines with patron details, amounts, and remaining balances (FR-FI-01).
  */
@@ -130,6 +143,19 @@ export async function listFines(
   totalCount: number;
   totalOutstandingAmount: number;
 }> {
+  const isDefault =
+    !filters.patronId &&
+    !filters.cardNo &&
+    !filters.status &&
+    !filters.fineType &&
+    !filters.search &&
+    (!filters.offset || filters.offset === 0);
+  const limit = filters.limit ?? 100;
+  const now = Date.now();
+
+  if (isDefault && cachedDefaultFines && cachedDefaultFines.limit === limit && now - cachedDefaultFines.cachedAt < 15000) {
+    return cachedDefaultFines.data;
+  }
   let query = db
     .select({
       id: schema.fines.id,
@@ -190,7 +216,7 @@ export async function listFines(
   }
 
   const rawRows = await query
-    .orderBy(desc(schema.fines.createdAt))
+    .orderBy(desc(schema.fines.id))
     .limit(filters.limit ?? 100)
     .offset(filters.offset ?? 0);
 
@@ -223,11 +249,17 @@ export async function listFines(
     };
   });
 
-  return {
+  const result = {
     fines,
     totalCount: fines.length,
     totalOutstandingAmount: Number(totalOutstandingAmount.toFixed(2)),
   };
+
+  if (isDefault) {
+    cachedDefaultFines = { limit, data: result, cachedAt: now };
+  }
+
+  return result;
 }
 
 /**
@@ -336,6 +368,7 @@ export async function collectPayment(
       tx,
     );
 
+    invalidateFinesCache();
     return {
       success: true,
       payment: createdPayment,
@@ -432,6 +465,7 @@ export async function waiveFine(params: WaiveFineParams, actor: Actor, db: DbIns
       tx,
     );
 
+    invalidateFinesCache();
     return {
       success: true,
       payment: createdPayment,
@@ -468,7 +502,6 @@ export async function getReceiptDetails(
       patronFirstName: schema.patrons.firstName,
       patronLastName: schema.patrons.lastName,
       patronCardNo: schema.patrons.cardNo,
-      patronRollNo: schema.patrons.rollNo,
       patronEmployeeId: schema.patrons.employeeId,
       patronType: schema.patrons.patronType,
       patronMobile: schema.patrons.mobile,
@@ -510,7 +543,6 @@ export async function getReceiptDetails(
       id: row.patronId,
       name: [row.patronFirstName, row.patronLastName].filter(Boolean).join(" "),
       cardNo: row.patronCardNo,
-      rollNo: row.patronRollNo,
       employeeId: row.patronEmployeeId,
       patronType: row.patronType,
       mobile: row.patronMobile,

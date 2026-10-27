@@ -97,12 +97,12 @@ export default async function NoDuesCertificatePage({ params }: CertificatePageP
                 <span className="text-slate-600">Library Card No:</span>
                 <span className="font-mono font-bold text-blue-950">{patron.cardNo}</span>
               </div>
-              <div className="flex justify-between border-b border-slate-200 pb-1">
-                <span className="text-slate-600">Roll No / Emp ID:</span>
-                <span className="font-mono font-bold text-slate-900">
-                  {patron.rollNo || patron.employeeId || "N/A"}
-                </span>
-              </div>
+              {patron.employeeId && (
+                <div className="flex justify-between border-b border-slate-200 pb-1">
+                  <span className="text-slate-600">Employee ID:</span>
+                  <span className="font-mono font-bold text-slate-900">{patron.employeeId}</span>
+                </div>
+              )}
               <div className="flex justify-between border-b border-slate-200 pb-1">
                 <span className="text-slate-600">Patron Category:</span>
                 <span className="font-semibold text-slate-900">{patron.categoryName}</span>
@@ -124,11 +124,13 @@ export default async function NoDuesCertificatePage({ params }: CertificatePageP
               This is to certify that{" "}
               <strong className="text-slate-950 font-bold">{patron.fullName}</strong>, bearing
               Library Card Number{" "}
-              <strong className="text-slate-950 font-mono">{patron.cardNo}</strong> and Roll Number
-              / Employee ID{" "}
-              <strong className="text-slate-950 font-mono">
-                {patron.rollNo || patron.employeeId || "N/A"}
-              </strong>
+              <strong className="text-slate-950 font-mono">{patron.cardNo}</strong>
+              {patron.employeeId && (
+                <>
+                  {" "}and Employee ID{" "}
+                  <strong className="text-slate-950 font-mono">{patron.employeeId}</strong>
+                </>
+              )}
               , has returned all issued library books, reference materials, journals, and equipment
               to the <strong className="text-slate-950">{certificate.libraryName}</strong>.
             </p>
@@ -150,7 +152,7 @@ export default async function NoDuesCertificatePage({ params }: CertificatePageP
           {/* Verification Status Matrix */}
           <div className="mb-10 grid grid-cols-3 gap-3 text-center text-xs">
             <div className="border border-slate-300 rounded p-2 bg-slate-50">
-              <span className="text-slate-500 block">Pending Book Loans</span>
+              <span className="text-slate-500 block">Pending Issued Books</span>
               <span className="text-base font-bold text-emerald-700">0 (NIL)</span>
             </div>
             <div className="border border-slate-300 rounded p-2 bg-slate-50">

@@ -1,10 +1,12 @@
 import { PublicFooter, PublicHeader } from "@/components/layout/PublicHeader";
 import { env } from "@/config/env";
+import { checkDatabaseConnection } from "@/db/client";
 
 export const dynamic = "force-dynamic";
 
-export default function HealthPage() {
+export default async function HealthPage() {
   const uptimeMinutes = Math.floor(process.uptime() / 60);
+  const dbCheck = await checkDatabaseConnection();
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -14,11 +16,15 @@ export default function HealthPage() {
         <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xs">
           <div className="border-b border-slate-200 bg-slate-50/75 px-6 py-4">
             <div className="flex items-center space-x-2">
-              <span className="h-3 w-3 rounded-full bg-emerald-500 animate-pulse" />
+              <span
+                className={`h-3 w-3 rounded-full ${
+                  dbCheck.connected ? "bg-emerald-500 animate-pulse" : "bg-red-500 animate-ping"
+                }`}
+              />
               <h2 className="text-lg font-bold text-slate-900">Application Health & Status</h2>
             </div>
             <p className="mt-1 text-xs text-slate-500">
-              System diagnostics and runtime operational parameters
+              System diagnostics and runtime operational parameters (FR-ST-01, FR-ST-02)
             </p>
           </div>
 
@@ -26,8 +32,32 @@ export default function HealthPage() {
             <dl className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2">
               <div className="rounded-lg border border-slate-100 bg-slate-50/50 p-4">
                 <dt className="text-xs font-medium text-slate-500">Service Status</dt>
-                <dd className="mt-1 text-sm font-semibold text-emerald-700">
-                  Operational (Healthy)
+                <dd
+                  className={`mt-1 text-sm font-semibold ${
+                    dbCheck.connected ? "text-emerald-700" : "text-amber-700"
+                  }`}
+                >
+                  {dbCheck.connected ? "Operational (Healthy)" : "Degraded (Database Unavailable)"}
+                </dd>
+              </div>
+
+              <div className="rounded-lg border border-slate-100 bg-slate-50/50 p-4">
+                <dt className="text-xs font-medium text-slate-500">Database Connection</dt>
+                <dd
+                  className={`mt-1 text-sm font-semibold break-all ${
+                    dbCheck.connected ? "text-emerald-700" : "text-red-700"
+                  }`}
+                >
+                  {dbCheck.connected
+                    ? `Connected (${dbCheck.version})`
+                    : `Disconnected: ${dbCheck.error}`}
+                </dd>
+              </div>
+
+              <div className="rounded-lg border border-slate-100 bg-slate-50/50 p-4 sm:col-span-2">
+                <dt className="text-xs font-medium text-slate-500">Database Endpoint</dt>
+                <dd className="mt-1 text-xs font-mono font-semibold text-slate-800 break-all">
+                  {dbCheck.sanitizedUrl}
                 </dd>
               </div>
 

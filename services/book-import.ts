@@ -5,6 +5,7 @@ import { decodeCsvBuffer, getFieldValue, parseCsvDate, parseCsvText } from "@/im
 import { DB_TEXT_LIMITS, truncate, truncateWithDefault } from "@/imports/truncate";
 import { formatAccessionNumber, normalizeIsbn } from "@/lib/numbering";
 import { recordAuditLog } from "./audit";
+import { DEFAULT_FORMATS, type ImportColumnDef } from "./import-format";
 
 // biome-ignore lint/suspicious/noExplicitAny: Generic DB instance support
 type DbInstance = any;
@@ -20,6 +21,7 @@ export interface BookImportOptions {
   defaultItemTypeId?: number;
   encoding?: string;
   fileName?: string;
+  formatColumns?: ImportColumnDef[];
 }
 
 export interface ValidatedBookCopyData {
@@ -149,6 +151,113 @@ export async function validateBookCsv(
     vendorByName.set(v.name.trim().toLowerCase(), v);
   }
 
+  const cleanAlphaNum = (str: string): string => {
+    if (!str) return "";
+    return str.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+  };
+
+  const resolveDepartment = (raw: string): typeof schema.departments.$inferSelect | undefined => {
+    if (!raw) return undefined;
+    const clean = cleanAlphaNum(raw);
+    const norm = raw.trim().toUpperCase();
+
+    // 1. Direct code lookup
+    const direct = departmentByCode.get(norm);
+    if (direct) return direct;
+
+    // 2. Exact workbook worksheet mappings
+    if (norm === "DENGGDDP") return departmentByCode.get("DIPLOMA");
+    if (norm === "DENGGDM") return departmentByCode.get("MBA");
+    if (norm === "DENGGD") return departmentByCode.get("BTECH");
+    if (norm === "AM") return departmentByCode.get("BBA");
+    if (norm === "B.COM" || clean === "BCOM") return departmentByCode.get("BCOM");
+    if (norm.startsWith("B.ED") || clean.startsWith("BED")) return departmentByCode.get("BED");
+    if (norm === "BSCS" || norm === "BSCH" || clean === "BSCS" || clean === "BSCH")
+      return departmentByCode.get("BSC");
+    if (norm === "C") return departmentByCode.get("BCA");
+    if (norm === "M" || norm === "PG" || norm === "S") return departmentByCode.get("MBA");
+
+    // 3. Cleaned alphanumeric code match (e.g. "B_TECH", "B.TECH", "btech", "B-Tech" -> "BTECH")
+    for (const d of departments) {
+      if (cleanAlphaNum(d.code) === clean) return d;
+    }
+
+    // 3. Cleaned alphanumeric name match (e.g. "B.Tech" matches department name "B.Tech")
+    for (const d of departments) {
+      if (cleanAlphaNum(d.name) === clean) return d;
+    }
+
+    // 4. B.Tech aliases
+    if (
+      clean === "BTECH" ||
+      clean.startsWith("BTECH") ||
+      clean === "BACHELOROFTECHNOLOGY" ||
+      clean.startsWith("BACHELOROFTECHNOLOGY") ||
+      /\bb[\.\s\-]?tech\b/i.test(raw)
+    ) {
+      const btech = departments.find(
+        (d: { code: string; name: string }) =>
+          d.code.toUpperCase() === "BTECH" ||
+          d.name.toUpperCase().includes("B.TECH") ||
+          d.name.toUpperCase().includes("TECHNOLOGY"),
+      );
+      if (btech) return btech;
+    }
+
+    // 5. Diploma / Polytechnic aliases
+    if (clean.includes("DIPLOMA") || clean.includes("POLYTECHNIC")) {
+      const dip = departments.find(
+        (d: { code: string; name: string }) =>
+          d.code.toUpperCase() === "DIPLOMA" ||
+          d.name.toUpperCase().includes("DIPLOMA") ||
+          d.name.toUpperCase().includes("POLYTECHNIC"),
+      );
+      if (dip) return dip;
+    }
+
+    // 6. Substring in department name or code
+    for (const d of departments) {
+      if (d.name.toUpperCase().includes(norm) || norm.includes(d.name.toUpperCase())) {
+        return d;
+      }
+    }
+
+    // 7. College / Institution aliases fallback
+    type DeptRecord = typeof schema.departments.$inferSelect;
+    if (clean.includes("RBCET") || clean.includes("ENGINEERING")) {
+      const eng = (departments as DeptRecord[]).find(
+        (d: DeptRecord) => d.code.toUpperCase() === "BTECH" || d.code.toUpperCase() === "CSE",
+      );
+      if (eng) return eng;
+    }
+    if (clean.includes("RBCP") || clean.includes("PHARMACY")) {
+      const pharm = (departments as DeptRecord[]).find(
+        (d: DeptRecord) => d.code.toUpperCase() === "BPHARM" || d.code.toUpperCase() === "PHARM",
+      );
+      if (pharm) return pharm;
+    }
+    if (clean.includes("RBCN") || clean.includes("NURSING")) {
+      const nurs = (departments as DeptRecord[]).find(
+        (d: DeptRecord) => d.code.toUpperCase() === "BSCNURS" || d.code.toUpperCase() === "NURS",
+      );
+      if (nurs) return nurs;
+    }
+    if (clean.includes("RBTTI") || clean.includes("TEACHER") || clean.includes("EDUCATION")) {
+      const edu = (departments as DeptRecord[]).find(
+        (d: DeptRecord) => d.code.toUpperCase() === "BED",
+      );
+      if (edu) return edu;
+    }
+    if (clean.includes("RBMI") || clean.includes("MANAGEMENT") || clean.includes("BUSINESS")) {
+      const mgmt = (departments as DeptRecord[]).find(
+        (d: DeptRecord) => d.code.toUpperCase() === "BBA" || d.code.toUpperCase() === "MBA",
+      );
+      if (mgmt) return mgmt;
+    }
+
+    return undefined;
+  };
+
   // Resolve default library and item type
   let defaultLibrary = libraries.find((l: { id: number }) => l.id === options.defaultLibraryId);
   if (!defaultLibrary) {
@@ -197,6 +306,8 @@ export async function validateBookCsv(
   // File-internal deduplication trackers
   const fileAccessions = new Set<string>();
   const fileBarcodes = new Set<string>();
+  const fileBibsByIsbn = new Map<string, { id: number; title: string; authors: string }>();
+  const fileBibsByTitleAuthor = new Map<string, { id: number; title: string; authors: string }>();
 
   const rows: BookRowPreview[] = [];
   let okCount = 0;
@@ -206,14 +317,33 @@ export async function validateBookCsv(
   let addCopiesCount = 0;
   let totalCopiesExpected = 0;
 
+  const formatMap = options.formatColumns
+    ? new Map(options.formatColumns.map((c) => [c.dbField, c]))
+    : null;
+
   for (const parsedRow of parsedRows) {
     const raw = parsedRow.raw;
     const rowNumber = parsedRow.rowNumber;
     const messages: string[] = [];
     let isError = false;
 
+    const resolveField = (dbField: string, defaultAliases: string[] = []): string | undefined => {
+      if (formatMap) {
+        const isKnownField = DEFAULT_FORMATS.CATALOGUE.some((d) => d.dbField === dbField);
+        if (isKnownField && !formatMap.has(dbField)) {
+          return undefined;
+        }
+      }
+      const configured = formatMap?.get(dbField);
+      const aliases = [dbField, ...defaultAliases];
+      if (configured?.csvHeader && configured.csvHeader !== dbField) {
+        aliases.unshift(configured.csvHeader);
+      }
+      return getFieldValue(raw, configured?.csvHeader || dbField, aliases);
+    };
+
     // --- Title (REQUIRED) ---
-    const rawTitle = getFieldValue(raw, "title", ["book_title", "title_name"]);
+    const rawTitle = resolveField("title", ["book_title", "title_name", "bookname", "book_name"]);
     if (!rawTitle) {
       messages.push("Missing required field: title");
       isError = true;
@@ -221,9 +351,11 @@ export async function validateBookCsv(
     const title = truncateWithDefault(rawTitle, DB_TEXT_LIMITS.TITLE, "Untitled");
 
     // --- ISBN & Deduplication / Matching (FR-BI-03) ---
-    const rawIsbn = getFieldValue(raw, "isbn", ["isbn_number", "isbn_13", "isbn_10"]);
+    const rawIsbn = resolveField("isbn", ["isbn_number", "isbn_13", "isbn_10", "isbn13", "isbn10"]);
     let normalizedIsbn: string | null = null;
-    let matchedBib: (typeof existingBibs)[0] | undefined;
+    let matchedBib:
+      | { id: number; title: string; authors: string; isbn?: string | null }
+      | undefined;
 
     if (rawIsbn) {
       normalizedIsbn = normalizeIsbn(rawIsbn);
@@ -231,50 +363,67 @@ export async function validateBookCsv(
         if (normalizedIsbn.length !== 10 && normalizedIsbn.length !== 13) {
           messages.push(`ISBN "${rawIsbn}" is neither 10 nor 13 digits; retained`);
         }
-        matchedBib = bibsByIsbn.get(normalizedIsbn);
+        matchedBib = bibsByIsbn.get(normalizedIsbn) ?? fileBibsByIsbn.get(normalizedIsbn);
       } else {
         messages.push(`Could not normalize ISBN "${rawIsbn}"`);
       }
     }
 
     // Authors
-    const rawAuthors = getFieldValue(raw, "authors", ["author", "writer", "creators"]);
+    const rawAuthors = resolveField("authors", ["author", "writer", "creators", "creator"]);
     const authors = truncateWithDefault(rawAuthors, DB_TEXT_LIMITS.AUTHORS, "Unknown");
 
     // If not matched by ISBN, check match by Title + Authors
     if (!matchedBib && rawTitle) {
-      const match = existingBibs.find(
+      const matchDb = existingBibs.find(
         (b: { title: string; authors: string }) =>
           b.title.trim().toLowerCase() === title.trim().toLowerCase() &&
           b.authors.trim().toLowerCase() === authors.trim().toLowerCase(),
       );
-      if (match) {
-        matchedBib = match;
+      if (matchDb) {
+        matchedBib = matchDb;
+      } else {
+        const key = `${title.trim().toLowerCase()}:::${authors.trim().toLowerCase()}`;
+        if (fileBibsByTitleAuthor.has(key)) {
+          matchedBib = fileBibsByTitleAuthor.get(key);
+        }
       }
     }
 
     const action: "NEW_TITLE" | "ADD_COPIES" = matchedBib ? "ADD_COPIES" : "NEW_TITLE";
     if (matchedBib) {
       messages.push(
-        `Matching title found (ID #${matchedBib.id}): will add copies to existing title`,
+        matchedBib.id > 0
+          ? `Matching title found (ID #${matchedBib.id}): will add copies to existing title`
+          : "Matching title found in file: will add copies to existing title",
       );
     }
 
     // Subtitle & Editors
-    const subtitle = truncate(getFieldValue(raw, "subtitle"), DB_TEXT_LIMITS.SUBTITLE);
-    const editors = truncate(getFieldValue(raw, "editors", ["editor"]), DB_TEXT_LIMITS.EDITORS);
+    const subtitle = truncate(resolveField("subtitle"), DB_TEXT_LIMITS.SUBTITLE);
+    const editors = truncate(resolveField("editors", ["editor"]), DB_TEXT_LIMITS.EDITORS);
 
     // Edition & Publisher
-    const edition = truncate(getFieldValue(raw, "edition"), DB_TEXT_LIMITS.EDITION);
-    const publisher = truncate(getFieldValue(raw, "publisher"), DB_TEXT_LIMITS.PUBLISHER);
+    const edition = truncate(resolveField("edition"), DB_TEXT_LIMITS.EDITION);
+    const publisher = truncate(
+      resolveField("publisher", ["publishercode", "publisher_code", "pub", "press"]),
+      DB_TEXT_LIMITS.PUBLISHER,
+    );
     const placeOfPublication = truncate(
-      getFieldValue(raw, "place", ["place_of_publication"]),
+      resolveField("place", ["place_of_publication", "publication_place"]),
       DB_TEXT_LIMITS.PLACE,
     );
 
     // Pub Year
     let pubYear: number | null = null;
-    const rawYear = getFieldValue(raw, "pub_year", ["year", "publication_year"]);
+    const rawYear = resolveField("pub_year", [
+      "year",
+      "publication_year",
+      "copyrightdate",
+      "copyright_date",
+      "pubdate",
+      "pub_date",
+    ]);
     if (rawYear) {
       const y = parseInt(rawYear, 10);
       const currentYear = new Date().getFullYear();
@@ -288,26 +437,26 @@ export async function validateBookCsv(
     }
 
     // Pages & Language
-    const pages = truncate(getFieldValue(raw, "pages"), DB_TEXT_LIMITS.PAGES);
+    const pages = truncate(resolveField("pages"), DB_TEXT_LIMITS.PAGES);
     const language = truncateWithDefault(
-      getFieldValue(raw, "language"),
+      resolveField("language"),
       DB_TEXT_LIMITS.LANGUAGE,
       "English",
     );
 
     // Classification & Subject
-    const subject = truncate(getFieldValue(raw, "subject"), DB_TEXT_LIMITS.SUBJECT);
-    const keywords = truncate(getFieldValue(raw, "keywords"), DB_TEXT_LIMITS.KEYWORDS);
-    const ddcNumber = truncate(getFieldValue(raw, "ddc", ["ddc_number"]), DB_TEXT_LIMITS.DDC);
+    const subject = truncate(resolveField("subject"), DB_TEXT_LIMITS.SUBJECT);
+    const keywords = truncate(resolveField("keywords"), DB_TEXT_LIMITS.KEYWORDS);
+    const ddcNumber = truncate(resolveField("ddc_number", ["ddc"]), DB_TEXT_LIMITS.DDC);
     const callNumber = truncate(
-      getFieldValue(raw, "call_number", ["call_no"]),
+      resolveField("call_number", ["call_no"]),
       DB_TEXT_LIMITS.CALL_NUMBER,
     );
-    const summary = truncate(getFieldValue(raw, "summary"), DB_TEXT_LIMITS.SUMMARY);
+    const summary = truncate(resolveField("summary"), DB_TEXT_LIMITS.SUMMARY);
 
     // Price
     let price = "0.00";
-    const rawPrice = getFieldValue(raw, "price", ["cost", "rate"]);
+    const rawPrice = resolveField("price", ["cost", "rate"]);
     if (rawPrice) {
       const p = parseFloat(rawPrice);
       if (!isNaN(p) && p >= 0) {
@@ -319,11 +468,27 @@ export async function validateBookCsv(
 
     // Item Type
     let itemType = defaultItemType;
-    const rawItemType = getFieldValue(raw, "item_type", ["type"]);
+    const rawItemType = resolveField("item_type", ["type", "itype", "itemtype"]);
     if (rawItemType) {
-      const found = itemTypeByCode.get(rawItemType.toUpperCase());
+      const itUpper = rawItemType.trim().toUpperCase();
+      const found =
+        itemTypeByCode.get(itUpper) ||
+        (itUpper === "BK" ? itemTypeByCode.get("BOOK") : undefined) ||
+        (itUpper === "REF" || itUpper === "REFERENCE" ? itemTypeByCode.get("REF") : undefined) ||
+        (itUpper === "JOURNAL" || itUpper === "JRNL" ? itemTypeByCode.get("JOURNAL") : undefined) ||
+        (itUpper === "MAG" || itUpper === "MAGAZINE"
+          ? itemTypeByCode.get("MAGAZINE")
+          : undefined) ||
+        (itUpper === "PROJECT" || itUpper === "PROJ" ? itemTypeByCode.get("PROJECT") : undefined) ||
+        (itUpper === "THESIS" ? itemTypeByCode.get("THESIS") : undefined) ||
+        (itUpper === "GEN" ? itemTypeByCode.get("GEN") : undefined);
       if (found) {
         itemType = found;
+      } else if (defaultItemType) {
+        itemType = defaultItemType;
+        messages.push(
+          `Item type "${rawItemType}" not recognized; defaulted to ${defaultItemType.name}`,
+        );
       } else {
         messages.push(`Unknown item type "${rawItemType}"`);
         isError = true;
@@ -337,12 +502,18 @@ export async function validateBookCsv(
 
     // Library
     let library = defaultLibrary;
-    const rawLib = getFieldValue(raw, "library", ["lib", "branch"]);
+    const rawLib = resolveField("library", [
+      "lib",
+      "library_code",
+      "library_name",
+      "branch",
+      "branch_code",
+    ]);
     if (rawLib) {
       const found = libraryByCode.get(rawLib.toUpperCase());
       if (found) {
         library = found;
-      } else {
+      } else if (!library) {
         messages.push(`Unknown library "${rawLib}"`);
         isError = true;
       }
@@ -353,11 +524,26 @@ export async function validateBookCsv(
       isError = true;
     }
 
-    // Department
+    // Department / Course / Stream / College
     let departmentId: number | null = null;
-    const rawDept = getFieldValue(raw, "department", ["dept"]);
+    const rawDept = resolveField("department", [
+      "dept",
+      "department_code",
+      "department_name",
+      "dept_code",
+      "dept_name",
+      "course",
+      "course_code",
+      "course_name",
+      "branch",
+      "stream",
+      "program",
+      "discipline",
+      "b_tech",
+      "btech",
+    ]);
     if (rawDept) {
-      const found = departmentByCode.get(rawDept.toUpperCase());
+      const found = resolveDepartment(rawDept);
       if (found) {
         departmentId = found.id;
       } else {
@@ -365,9 +551,99 @@ export async function validateBookCsv(
       }
     }
 
+    // Fallback to college if department is still null
+    if (!departmentId) {
+      const rawCollege = getFieldValue(raw, "college", [
+        "college_code",
+        "college_name",
+        "institution",
+        "institution_code",
+        "institution_name",
+      ]);
+      if (rawCollege) {
+        const found = resolveDepartment(rawCollege);
+        if (found) {
+          departmentId = found.id;
+        }
+      }
+    }
+
+    // Fallback to sheet_name if department is still null
+    if (!departmentId) {
+      const rawSheet = getFieldValue(raw, "sheet_name", ["sheet", "sheetname"]);
+      if (rawSheet) {
+        const found = resolveDepartment(rawSheet);
+        if (found) {
+          departmentId = found.id;
+        }
+      }
+    }
+
+    // Fallback to barcode or accession number prefix
+    if (!departmentId) {
+      const rawBarcode = (
+        getFieldValue(raw, "barcode", ["barcodes", "barcode_no"]) ||
+        getFieldValue(raw, "accession_number", ["accession_no", "accession", "acc_no", "accno"]) ||
+        ""
+      )
+        .trim()
+        .toUpperCase();
+      if (rawBarcode.startsWith("DENGGDDP")) {
+        departmentId = departmentByCode.get("DIPLOMA")?.id ?? null;
+      } else if (rawBarcode.startsWith("DENGGDM")) {
+        departmentId = departmentByCode.get("MBA")?.id ?? null;
+      } else if (rawBarcode.startsWith("DENGGD")) {
+        departmentId = departmentByCode.get("BTECH")?.id ?? null;
+      } else if (rawBarcode.startsWith("AM-") || rawBarcode.startsWith("AM")) {
+        departmentId = departmentByCode.get("BBA")?.id ?? null;
+      } else if (rawBarcode.startsWith("C-") || rawBarcode.startsWith("C")) {
+        departmentId = departmentByCode.get("BCA")?.id ?? null;
+      } else if (
+        rawBarcode.startsWith("M-") ||
+        rawBarcode.startsWith("PG-") ||
+        rawBarcode.startsWith("S-") ||
+        rawBarcode.startsWith("PG") ||
+        rawBarcode.startsWith("M") ||
+        rawBarcode.startsWith("S")
+      ) {
+        departmentId = departmentByCode.get("MBA")?.id ?? null;
+      } else if (rawBarcode.startsWith("MCA-")) {
+        departmentId = departmentByCode.get("MCA")?.id ?? null;
+      } else if (
+        rawBarcode.startsWith("BC-") ||
+        rawBarcode.startsWith("B.C-") ||
+        rawBarcode.startsWith("B.C") ||
+        rawBarcode.startsWith("BC") ||
+        rawBarcode.startsWith("B.COM") ||
+        rawBarcode.startsWith("BCOM")
+      ) {
+        departmentId = departmentByCode.get("BCOM")?.id ?? null;
+      } else if (
+        rawBarcode.startsWith("BSCS-") ||
+        rawBarcode.startsWith("BSCH-") ||
+        rawBarcode.startsWith("BSCS") ||
+        rawBarcode.startsWith("BSCH")
+      ) {
+        departmentId = departmentByCode.get("BSC")?.id ?? null;
+      } else if (
+        rawBarcode.startsWith("BEDE") ||
+        rawBarcode.startsWith("BEDUBB") ||
+        rawBarcode.startsWith("BED") ||
+        rawBarcode.startsWith("B.ED")
+      ) {
+        departmentId = departmentByCode.get("BED")?.id ?? null;
+      } else if (rawBarcode.startsWith("BPH")) {
+        departmentId = departmentByCode.get("BPHARM")?.id ?? null;
+      } else if (rawBarcode.startsWith("DPH")) {
+        departmentId = departmentByCode.get("DPHARM")?.id ?? null;
+      } else if (rawBarcode.startsWith("NURS")) {
+        departmentId = departmentByCode.get("BSCNURS")?.id ?? null;
+      }
+    }
+
     // Vendor
     let vendorId: number | null = null;
-    const rawVendor = getFieldValue(raw, "vendor", ["supplier"]);
+    const rawVendor = resolveField("vendor", ["supplier"]);
     if (rawVendor) {
       const found = vendorByName.get(rawVendor.trim().toLowerCase());
       if (found) {
@@ -378,15 +654,14 @@ export async function validateBookCsv(
     }
 
     // Invoice & Location
-    const invoiceNo = truncate(getFieldValue(raw, "invoice_no"), DB_TEXT_LIMITS.INVOICE_NO);
-    const location = truncate(getFieldValue(raw, "location"), DB_TEXT_LIMITS.LOCATION);
+    const invoiceNo = truncate(resolveField("invoice_no"), DB_TEXT_LIMITS.INVOICE_NO);
+    const location = truncate(resolveField("location"), DB_TEXT_LIMITS.LOCATION);
     const acquisitionDate =
-      parseCsvDate(getFieldValue(raw, "acquisition_date")) ||
-      new Date().toISOString().split("T")[0];
+      parseCsvDate(resolveField("acquisition_date")) || new Date().toISOString().split("T")[0];
 
     // Copies count
     let copiesCount = 1;
-    const rawCopies = getFieldValue(raw, "copies", ["qty", "quantity", "no_of_copies"]);
+    const rawCopies = resolveField("copies", ["qty", "quantity", "no_of_copies"]);
     if (rawCopies) {
       const parsedCopies = parseInt(rawCopies, 10);
       if (!isNaN(parsedCopies) && parsedCopies >= 0 && parsedCopies <= 500) {
@@ -399,15 +674,19 @@ export async function validateBookCsv(
 
     // Accession Numbers & Barcodes (Pipe-delimited lists per FR-BI-04)
     const customCopies: ValidatedBookCopyData[] = [];
-    const rawAccessions = getFieldValue(raw, "accession_no", [
+    const rawAccessions = resolveField("accession_no", [
       "accession",
       "accession_number",
       "accession_numbers",
+      "acc_no",
     ]);
-    const rawBarcodes = getFieldValue(raw, "barcode", ["barcodes"]);
+    const rawBarcodes = resolveField("barcode", ["barcodes", "barcode_no"]);
 
-    if (rawAccessions) {
-      const accList = rawAccessions
+    const effectiveAccessions = rawAccessions || rawBarcodes;
+    const effectiveBarcodes = rawBarcodes || rawAccessions;
+
+    if (effectiveAccessions) {
+      const accList = effectiveAccessions
         .split("|")
         .map((s) => s.trim().toUpperCase())
         .filter(Boolean);
@@ -419,8 +698,8 @@ export async function validateBookCsv(
         isError = true;
       }
 
-      const barList = rawBarcodes
-        ? rawBarcodes
+      const barList = effectiveBarcodes
+        ? effectiveBarcodes
             .split("|")
             .map((s) => s.trim().toUpperCase())
             .filter(Boolean)
@@ -473,8 +752,17 @@ export async function validateBookCsv(
     }
 
     if (status !== "ERROR") {
-      if (action === "NEW_TITLE") newTitlesCount++;
-      else addCopiesCount++;
+      if (action === "NEW_TITLE") {
+        newTitlesCount++;
+        const dummyBib = { id: -rowNumber, title, authors };
+        if (normalizedIsbn) {
+          fileBibsByIsbn.set(normalizedIsbn, dummyBib);
+        }
+        const key = `${title.trim().toLowerCase()}:::${authors.trim().toLowerCase()}`;
+        fileBibsByTitleAuthor.set(key, dummyBib);
+      } else {
+        addCopiesCount++;
+      }
       totalCopiesExpected += copiesCount;
     }
 
@@ -557,149 +845,339 @@ export async function commitBookImport(
   const allAccessionNumbers: string[] = [];
   let totalCopiesAdded = 0;
 
-  for (const row of preview.rows) {
-    if (row.status === "ERROR" || !row.data) {
-      skippedRows.push({
-        rowNumber: row.rowNumber,
-        reason: row.messages.join("; ") || "Fatal validation errors",
-      });
-      continue;
-    }
-
-    const bookData = row.data;
-
-    try {
-      // Row-level transaction isolation (FR-BI-05, NFR-R-02)
-      const rowResult = await db.transaction(async (tx: DbInstance) => {
-        let bibId: number;
-
-        // 1. Resolve or Create Bibliographic Record
-        if (bookData.action === "ADD_COPIES" && bookData.existingBibId) {
-          bibId = bookData.existingBibId;
-        } else {
-          const [newBib] = await tx
-            .insert(schema.bibRecords)
-            .values({
-              title: bookData.title,
-              subtitle: bookData.subtitle,
-              authors: bookData.authors,
-              editors: bookData.editors,
-              isbn: bookData.isbn,
-              edition: bookData.edition,
-              publisher: bookData.publisher,
-              placeOfPublication: bookData.placeOfPublication,
-              pubYear: bookData.pubYear,
-              pages: bookData.pages,
-              language: bookData.language,
-              subject: bookData.subject,
-              keywords: bookData.keywords,
-              ddcNumber: bookData.ddcNumber,
-              callNumber: bookData.callNumber,
-              summary: bookData.summary,
-              price: bookData.price,
-              itemTypeId: bookData.itemTypeId,
-              departmentId: bookData.departmentId,
-            })
-            .returning();
-          bibId = newBib.id;
-        }
-
-        // 2. Add Physical Copies if count > 0
-        const rowAccessions: string[] = [];
-        if (bookData.copiesCount > 0) {
-          const [lib] = await tx
-            .select()
-            .from(schema.libraries)
-            .where(eq(schema.libraries.id, bookData.libraryId))
-            .limit(1);
-
-          let currentSeq = lib.nextAccessionNo;
-          const defaultStatus = bookData.isReference ? "REFERENCE_ONLY" : "AVAILABLE";
-          const copiesToInsert: Array<typeof schema.items.$inferInsert> = [];
-
-          for (let i = 0; i < bookData.copiesCount; i++) {
-            let accNo: string;
-            let barcode: string;
-
-            if (bookData.customCopies && bookData.customCopies[i]) {
-              accNo = bookData.customCopies[i].accessionNo;
-              barcode = bookData.customCopies[i].barcode;
-            } else {
-              accNo = formatAccessionNumber(lib.accessionPrefix, currentSeq);
-              barcode = accNo;
-              currentSeq++;
-            }
-
-            rowAccessions.push(accNo);
-
-            copiesToInsert.push({
-              bibId,
-              libraryId: bookData.libraryId,
-              accessionNo: accNo,
-              barcode,
-              callNumber: bookData.callNumber,
-              location: bookData.location,
-              price: bookData.price,
-              vendorId: bookData.vendorId,
-              invoiceNo: bookData.invoiceNo,
-              acquisitionDate: bookData.acquisitionDate,
-              status: defaultStatus,
-            });
-          }
-
-          // Update library's nextAccessionNo if sequence was advanced
-          if (currentSeq !== lib.nextAccessionNo) {
-            await tx
-              .update(schema.libraries)
-              .set({ nextAccessionNo: currentSeq, updatedAt: new Date() })
-              .where(eq(schema.libraries.id, lib.id));
-          }
-
-          await tx.insert(schema.items).values(copiesToInsert);
-        }
-
-        return {
-          bibId,
-          title: bookData.title,
-          action: bookData.action,
-          copiesAdded: bookData.copiesCount,
-          accessionNumbers: rowAccessions,
-        };
-      });
-
-      const accRange =
-        rowResult.accessionNumbers.length > 0
-          ? `${rowResult.accessionNumbers[0]} - ${rowResult.accessionNumbers[rowResult.accessionNumbers.length - 1]}`
-          : undefined;
-
-      titlesResult.push({
-        ...rowResult,
-        accessionRange: accRange,
-      });
-
-      allAccessionNumbers.push(...rowResult.accessionNumbers);
-      totalCopiesAdded += rowResult.copiesAdded;
-    } catch (err: unknown) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      skippedRows.push({
-        rowNumber: row.rowNumber,
-        reason: `Transaction insertion failure: ${errorMsg}`,
-      });
-    }
-  }
-
-  // Record batch in import_batches
+  // Initial batch record creation
   const [batch] = await db
     .insert(schema.importBatches)
     .values({
       importType: "CATALOGUE",
       fileName: preview.fileName,
       totalRows: preview.summary.totalRows,
-      importedRows: titlesResult.length,
-      skippedRows: skippedRows.length,
+      importedRows: 0,
+      skippedRows: 0,
       importedBy: actor.id,
     })
     .returning();
+
+  // 1. Collect skipped error rows
+  for (const row of preview.rows) {
+    if (row.status === "ERROR" || !row.data) {
+      skippedRows.push({
+        rowNumber: row.rowNumber,
+        reason: row.messages.join("; ") || "Fatal validation errors",
+      });
+    }
+  }
+
+  const validRows = preview.rows.filter((r) => r.status !== "ERROR" && r.data);
+
+  // 2. Load libraries for accession sequence handling
+  const libraries = await db.select().from(schema.libraries);
+  type LibraryRecord = typeof schema.libraries.$inferSelect;
+  const libraryMap = new Map<number, LibraryRecord>(
+    (libraries as LibraryRecord[]).map((l: LibraryRecord) => [l.id, l]),
+  );
+
+  // Track created bibIds by rowNumber, ISBN, and title/authors
+  const rowToBibIdMap = new Map<number, number>();
+  const isbnToBibIdMap = new Map<string, number>();
+  const titleAuthorToBibIdMap = new Map<string, number>();
+
+  const BATCH_SIZE = 250;
+
+  for (let i = 0; i < validRows.length; i += BATCH_SIZE) {
+    const chunk = validRows.slice(i, i + BATCH_SIZE);
+
+    try {
+      await db.transaction(async (tx: DbInstance) => {
+        const newTitleRows: typeof chunk = [];
+        const pendingChunkRows: Array<{ row: (typeof chunk)[0]; targetIndex: number }> = [];
+        const chunkBibsByTitleAuthor = new Map<string, number>();
+        const chunkBibsByIsbn = new Map<string, number>();
+
+        for (const row of chunk) {
+          const bd = row.data!;
+          if (bd.action === "ADD_COPIES" && bd.existingBibId && bd.existingBibId > 0) {
+            rowToBibIdMap.set(bd.rowNumber, bd.existingBibId);
+          } else {
+            const key = `${bd.title.trim().toLowerCase()}:::${bd.authors.trim().toLowerCase()}`;
+            const prevBibId = bd.isbn
+              ? isbnToBibIdMap.get(bd.isbn)
+              : titleAuthorToBibIdMap.get(key);
+            if (prevBibId) {
+              rowToBibIdMap.set(bd.rowNumber, prevBibId);
+            } else if (bd.isbn && chunkBibsByIsbn.has(bd.isbn)) {
+              const targetIdx = chunkBibsByIsbn.get(bd.isbn)!;
+              pendingChunkRows.push({ row, targetIndex: targetIdx });
+            } else if (chunkBibsByTitleAuthor.has(key)) {
+              const targetIdx = chunkBibsByTitleAuthor.get(key)!;
+              pendingChunkRows.push({ row, targetIndex: targetIdx });
+            } else {
+              const newIdx = newTitleRows.length;
+              newTitleRows.push(row);
+              if (bd.isbn) chunkBibsByIsbn.set(bd.isbn, newIdx);
+              chunkBibsByTitleAuthor.set(key, newIdx);
+            }
+          }
+        }
+
+        // Bulk insert new titles in this chunk
+        if (newTitleRows.length > 0) {
+          const bibInserts = newTitleRows.map((r) => {
+            const bd = r.data!;
+            return {
+              title: bd.title,
+              subtitle: bd.subtitle,
+              authors: bd.authors,
+              editors: bd.editors,
+              isbn: bd.isbn,
+              edition: bd.edition,
+              publisher: bd.publisher,
+              placeOfPublication: bd.placeOfPublication,
+              pubYear: bd.pubYear,
+              pages: bd.pages,
+              language: bd.language,
+              subject: bd.subject,
+              keywords: bd.keywords,
+              ddcNumber: bd.ddcNumber,
+              callNumber: bd.callNumber,
+              summary: bd.summary,
+              price: bd.price,
+              itemTypeId: bd.itemTypeId,
+              departmentId: bd.departmentId,
+              importBatchId: batch.id,
+            };
+          });
+
+          const insertedBibs = await tx.insert(schema.bibRecords).values(bibInserts).returning();
+
+          for (let j = 0; j < newTitleRows.length; j++) {
+            const row = newTitleRows[j];
+            const bibId = insertedBibs[j].id;
+            const bd = row.data!;
+            rowToBibIdMap.set(bd.rowNumber, bibId);
+            if (bd.isbn) isbnToBibIdMap.set(bd.isbn, bibId);
+            const key = `${bd.title.trim().toLowerCase()}:::${bd.authors.trim().toLowerCase()}`;
+            titleAuthorToBibIdMap.set(key, bibId);
+          }
+
+          for (const pending of pendingChunkRows) {
+            const bibId = insertedBibs[pending.targetIndex].id;
+            rowToBibIdMap.set(pending.row.data!.rowNumber, bibId);
+          }
+        }
+
+        // Prepare physical copies (items)
+        const itemsToInsert: Array<typeof schema.items.$inferInsert> = [];
+        const libSequencesAdvanced = new Map<number, number>();
+
+        for (const row of chunk) {
+          const bd = row.data!;
+          const bibId = rowToBibIdMap.get(bd.rowNumber);
+          if (!bibId) continue;
+
+          if (bd.copiesCount > 0) {
+            const lib = libraryMap.get(bd.libraryId);
+            let currentSeq = libSequencesAdvanced.get(bd.libraryId) ?? lib?.nextAccessionNo ?? 1;
+            const defaultStatus = bd.isReference ? "REFERENCE_ONLY" : "AVAILABLE";
+            const rowAccessions: string[] = [];
+
+            for (let c = 0; c < bd.copiesCount; c++) {
+              let accNo: string;
+              let barcode: string;
+
+              if (bd.customCopies && bd.customCopies[c]) {
+                accNo = bd.customCopies[c].accessionNo;
+                barcode = bd.customCopies[c].barcode;
+              } else {
+                const prefix = lib?.accessionPrefix ?? "CL";
+                accNo = formatAccessionNumber(prefix, currentSeq);
+                barcode = accNo;
+                currentSeq++;
+              }
+
+              rowAccessions.push(accNo);
+              allAccessionNumbers.push(accNo);
+
+              itemsToInsert.push({
+                bibId,
+                libraryId: bd.libraryId,
+                accessionNo: accNo,
+                barcode,
+                callNumber: bd.callNumber,
+                location: bd.location,
+                price: bd.price,
+                vendorId: bd.vendorId,
+                invoiceNo: bd.invoiceNo,
+                acquisitionDate: bd.acquisitionDate,
+                status: defaultStatus,
+              });
+            }
+
+            libSequencesAdvanced.set(bd.libraryId, currentSeq);
+            totalCopiesAdded += bd.copiesCount;
+
+            titlesResult.push({
+              bibId,
+              title: bd.title,
+              action: bd.action,
+              copiesAdded: bd.copiesCount,
+              accessionNumbers: rowAccessions,
+              accessionRange:
+                rowAccessions.length > 0
+                  ? `${rowAccessions[0]} - ${rowAccessions[rowAccessions.length - 1]}`
+                  : undefined,
+            });
+          }
+        }
+
+        // Bulk insert items for this chunk
+        if (itemsToInsert.length > 0) {
+          await tx.insert(schema.items).values(itemsToInsert);
+          for (const item of itemsToInsert) {
+            const libTable = schema.getLibraryItemsTable(item.libraryId);
+            await tx.insert(libTable).values(item).onConflictDoNothing();
+          }
+        }
+
+        // Update library nextAccessionNo
+        for (const [libId, newSeq] of libSequencesAdvanced.entries()) {
+          const lib = libraryMap.get(libId);
+          if (lib && newSeq !== lib.nextAccessionNo) {
+            await tx
+              .update(schema.libraries)
+              .set({ nextAccessionNo: newSeq, updatedAt: new Date() })
+              .where(eq(schema.libraries.id, libId));
+            lib.nextAccessionNo = newSeq;
+          }
+        }
+      });
+    } catch (err: unknown) {
+      // Graceful fallback to row-by-row on chunk failure
+      for (const row of chunk) {
+        const bd = row.data!;
+        try {
+          await db.transaction(async (tx: DbInstance) => {
+            let bibId: number;
+            if (bd.action === "ADD_COPIES" && bd.existingBibId && bd.existingBibId > 0) {
+              bibId = bd.existingBibId;
+            } else {
+              const [newBib] = await tx
+                .insert(schema.bibRecords)
+                .values({
+                  title: bd.title,
+                  subtitle: bd.subtitle,
+                  authors: bd.authors,
+                  editors: bd.editors,
+                  isbn: bd.isbn,
+                  edition: bd.edition,
+                  publisher: bd.publisher,
+                  placeOfPublication: bd.placeOfPublication,
+                  pubYear: bd.pubYear,
+                  pages: bd.pages,
+                  language: bd.language,
+                  subject: bd.subject,
+                  keywords: bd.keywords,
+                  ddcNumber: bd.ddcNumber,
+                  callNumber: bd.callNumber,
+                  summary: bd.summary,
+                  price: bd.price,
+                  itemTypeId: bd.itemTypeId,
+                  departmentId: bd.departmentId,
+                  importBatchId: batch.id,
+                })
+                .returning();
+              bibId = newBib.id;
+            }
+
+            if (bd.copiesCount > 0) {
+              const [lib] = await tx
+                .select()
+                .from(schema.libraries)
+                .where(eq(schema.libraries.id, bd.libraryId))
+                .limit(1);
+
+              let currentSeq = lib.nextAccessionNo;
+              const defaultStatus = bd.isReference ? "REFERENCE_ONLY" : "AVAILABLE";
+              const copiesToInsert: Array<typeof schema.items.$inferInsert> = [];
+              const rowAccessions: string[] = [];
+
+              for (let c = 0; c < bd.copiesCount; c++) {
+                let accNo: string;
+                let barcode: string;
+                if (bd.customCopies && bd.customCopies[c]) {
+                  accNo = bd.customCopies[c].accessionNo;
+                  barcode = bd.customCopies[c].barcode;
+                } else {
+                  accNo = formatAccessionNumber(lib.accessionPrefix, currentSeq);
+                  barcode = accNo;
+                  currentSeq++;
+                }
+
+                rowAccessions.push(accNo);
+                allAccessionNumbers.push(accNo);
+
+                copiesToInsert.push({
+                  bibId,
+                  libraryId: bd.libraryId,
+                  accessionNo: accNo,
+                  barcode,
+                  callNumber: bd.callNumber,
+                  location: bd.location,
+                  price: bd.price,
+                  vendorId: bd.vendorId,
+                  invoiceNo: bd.invoiceNo,
+                  acquisitionDate: bd.acquisitionDate,
+                  status: defaultStatus,
+                  importBatchId: batch.id,
+                });
+              }
+
+              if (currentSeq !== lib.nextAccessionNo) {
+                await tx
+                  .update(schema.libraries)
+                  .set({ nextAccessionNo: currentSeq, updatedAt: new Date() })
+                  .where(eq(schema.libraries.id, lib.id));
+              }
+
+              await tx.insert(schema.items).values(copiesToInsert);
+              const libTable = schema.getLibraryItemsTable(bd.libraryId);
+              for (const copy of copiesToInsert) {
+                await tx.insert(libTable).values(copy).onConflictDoNothing();
+              }
+
+              totalCopiesAdded += bd.copiesCount;
+              titlesResult.push({
+                bibId,
+                title: bd.title,
+                action: bd.action,
+                copiesAdded: bd.copiesCount,
+                accessionNumbers: rowAccessions,
+                accessionRange:
+                  rowAccessions.length > 0
+                    ? `${rowAccessions[0]} - ${rowAccessions[rowAccessions.length - 1]}`
+                    : undefined,
+              });
+            }
+          });
+        } catch (singleErr: unknown) {
+          const msg = singleErr instanceof Error ? singleErr.message : String(singleErr);
+          skippedRows.push({
+            rowNumber: row.rowNumber,
+            reason: `Row insert failure: ${msg}`,
+          });
+        }
+      }
+    }
+  }
+
+  // Update batch metadata with final counts
+  await db
+    .update(schema.importBatches)
+    .set({
+      importedRows: titlesResult.length,
+      skippedRows: skippedRows.length,
+    })
+    .where(eq(schema.importBatches.id, batch.id));
 
   // Audit entry
   await recordAuditLog(

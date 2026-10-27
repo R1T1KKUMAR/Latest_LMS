@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         {
           success: false,
-          error: "Either Loan ID or Item Barcode/Accession Number is required to renew",
+          error: "Either Issue ID or Item Barcode/Accession Number is required to renew",
         },
         { status: 400 },
       );
@@ -55,7 +55,7 @@ export async function POST(request: NextRequest) {
     const err = error as { statusCode?: number; message?: string };
     const status = err.statusCode ?? 400;
     return NextResponse.json(
-      { success: false, error: err.message ?? "Failed to renew loan" },
+      { success: false, error: err.message ?? "Failed to renew book issue" },
       { status },
     );
   }

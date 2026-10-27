@@ -234,10 +234,7 @@ bad-date,Invalid Date Row,ANNUAL,Should error
       expect(adjusted.fine.status).toBe("OUTSTANDING");
 
       // Verify in database
-      const [fetched] = await db
-        .select()
-        .from(schema.fines)
-        .where(eq(schema.fines.id, fine.id));
+      const [fetched] = await db.select().from(schema.fines).where(eq(schema.fines.id, fine.id));
       expect(Number(fetched.amount)).toBe(20.0);
     });
 

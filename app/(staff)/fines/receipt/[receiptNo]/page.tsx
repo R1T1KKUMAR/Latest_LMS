@@ -86,12 +86,6 @@ export default async function ReceiptPage({ params }: ReceiptPageProps) {
               <span className="text-slate-500">Card Number: </span>
               <strong className="font-mono text-slate-900">{receipt.patron.cardNo}</strong>
             </div>
-            {receipt.patron.rollNo && (
-              <div>
-                <span className="text-slate-500">Roll No: </span>
-                <span className="text-slate-800">{receipt.patron.rollNo}</span>
-              </div>
-            )}
             {receipt.patron.employeeId && (
               <div>
                 <span className="text-slate-500">Emp ID: </span>

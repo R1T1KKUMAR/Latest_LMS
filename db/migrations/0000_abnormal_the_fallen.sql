@@ -7,6 +7,9 @@ CREATE TABLE "courses" (
 	"name" varchar(200) NOT NULL,
 	"duration_years" integer NOT NULL,
 	"is_active" boolean DEFAULT true NOT NULL,
+	"is_librarian_available" boolean DEFAULT true NOT NULL,
+	"librarian_status_note" text,
+	"librarian_status_updated_at" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "courses_code_unique" UNIQUE("code"),
@@ -54,6 +57,9 @@ CREATE TABLE "libraries" (
 	"accession_prefix" varchar(10) NOT NULL,
 	"next_accession_no" integer DEFAULT 1 NOT NULL,
 	"is_active" boolean DEFAULT true NOT NULL,
+	"is_librarian_available" boolean DEFAULT true NOT NULL,
+	"librarian_status_note" text,
+	"librarian_status_updated_at" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "libraries_code_unique" UNIQUE("code"),
@@ -153,6 +159,7 @@ CREATE TABLE "users" (
 	"role_id" integer NOT NULL,
 	"library_id" integer NOT NULL,
 	"is_active" boolean DEFAULT true NOT NULL,
+	"is_available" boolean DEFAULT true NOT NULL,
 	"last_login" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
@@ -164,10 +171,10 @@ CREATE TABLE "patrons" (
 	"card_no" varchar(50) NOT NULL,
 	"patron_type" varchar(20) NOT NULL,
 	"category_id" integer NOT NULL,
+	"library_id" integer,
 	"institution_id" integer,
 	"department_id" integer,
 	"course_id" integer,
-	"roll_no" varchar(50),
 	"employee_id" varchar(50),
 	"first_name" varchar(60) NOT NULL,
 	"middle_name" varchar(60),
@@ -188,10 +195,10 @@ CREATE TABLE "patrons" (
 	"username" varchar(50) NOT NULL,
 	"password_hash" varchar(255) NOT NULL,
 	"must_change_password" boolean DEFAULT true NOT NULL,
+	"import_batch_id" integer,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "patrons_card_no_unique" UNIQUE("card_no"),
-	CONSTRAINT "patrons_roll_no_unique" UNIQUE("roll_no"),
 	CONSTRAINT "patrons_employee_id_unique" UNIQUE("employee_id"),
 	CONSTRAINT "patrons_username_unique" UNIQUE("username"),
 	CONSTRAINT "chk_patron_patron_type" CHECK ("patrons"."patron_type" IN ('STUDENT', 'FACULTY', 'STAFF', 'GUEST')),
@@ -219,6 +226,7 @@ CREATE TABLE "bib_records" (
 	"department_id" integer,
 	"summary" text,
 	"price" numeric(10, 2) DEFAULT '0.00',
+	"import_batch_id" integer,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "chk_pub_year" CHECK ("bib_records"."pub_year" IS NULL OR ("bib_records"."pub_year" >= 1500 AND "bib_records"."pub_year" <= 2100)),
@@ -239,12 +247,97 @@ CREATE TABLE "items" (
 	"acquisition_date" date DEFAULT now(),
 	"status" varchar(20) DEFAULT 'AVAILABLE' NOT NULL,
 	"condition_note" varchar(500),
+	"import_batch_id" integer,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "items_accession_no_unique" UNIQUE("accession_no"),
 	CONSTRAINT "items_barcode_unique" UNIQUE("barcode"),
 	CONSTRAINT "chk_item_price" CHECK ("items"."price" >= 0),
 	CONSTRAINT "chk_item_status" CHECK ("items"."status" IN ('AVAILABLE', 'ISSUED', 'RESERVED', 'REFERENCE_ONLY', 'LOST', 'DAMAGED', 'REPAIR', 'WITHDRAWN', 'PROCESSING'))
+);
+--> statement-breakpoint
+CREATE TABLE "items_cl" (
+	"id" serial PRIMARY KEY NOT NULL,
+	"bib_id" integer NOT NULL,
+	"library_id" integer NOT NULL,
+	"accession_no" varchar(30) NOT NULL,
+	"barcode" varchar(40) NOT NULL,
+	"call_number" varchar(100),
+	"location" varchar(100),
+	"price" numeric(10, 2) DEFAULT '0.00' NOT NULL,
+	"vendor_id" integer,
+	"invoice_no" varchar(100),
+	"acquisition_date" date DEFAULT now(),
+	"status" varchar(20) DEFAULT 'AVAILABLE' NOT NULL,
+	"condition_note" varchar(500),
+	"import_batch_id" integer,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "items_cl_accession_no_unique" UNIQUE("accession_no"),
+	CONSTRAINT "items_cl_barcode_unique" UNIQUE("barcode")
+);
+--> statement-breakpoint
+CREATE TABLE "items_lib_gn" (
+	"id" serial PRIMARY KEY NOT NULL,
+	"bib_id" integer NOT NULL,
+	"library_id" integer NOT NULL,
+	"accession_no" varchar(30) NOT NULL,
+	"barcode" varchar(40) NOT NULL,
+	"call_number" varchar(100),
+	"location" varchar(100),
+	"price" numeric(10, 2) DEFAULT '0.00' NOT NULL,
+	"vendor_id" integer,
+	"invoice_no" varchar(100),
+	"acquisition_date" date DEFAULT now(),
+	"status" varchar(20) DEFAULT 'AVAILABLE' NOT NULL,
+	"condition_note" varchar(500),
+	"import_batch_id" integer,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "items_lib_gn_accession_no_unique" UNIQUE("accession_no"),
+	CONSTRAINT "items_lib_gn_barcode_unique" UNIQUE("barcode")
+);
+--> statement-breakpoint
+CREATE TABLE "items_rbcp" (
+	"id" serial PRIMARY KEY NOT NULL,
+	"bib_id" integer NOT NULL,
+	"library_id" integer NOT NULL,
+	"accession_no" varchar(30) NOT NULL,
+	"barcode" varchar(40) NOT NULL,
+	"call_number" varchar(100),
+	"location" varchar(100),
+	"price" numeric(10, 2) DEFAULT '0.00' NOT NULL,
+	"vendor_id" integer,
+	"invoice_no" varchar(100),
+	"acquisition_date" date DEFAULT now(),
+	"status" varchar(20) DEFAULT 'AVAILABLE' NOT NULL,
+	"condition_note" varchar(500),
+	"import_batch_id" integer,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "items_rbcp_accession_no_unique" UNIQUE("accession_no"),
+	CONSTRAINT "items_rbcp_barcode_unique" UNIQUE("barcode")
+);
+--> statement-breakpoint
+CREATE TABLE "items_rbcn" (
+	"id" serial PRIMARY KEY NOT NULL,
+	"bib_id" integer NOT NULL,
+	"library_id" integer NOT NULL,
+	"accession_no" varchar(30) NOT NULL,
+	"barcode" varchar(40) NOT NULL,
+	"call_number" varchar(100),
+	"location" varchar(100),
+	"price" numeric(10, 2) DEFAULT '0.00' NOT NULL,
+	"vendor_id" integer,
+	"invoice_no" varchar(100),
+	"acquisition_date" date DEFAULT now(),
+	"status" varchar(20) DEFAULT 'AVAILABLE' NOT NULL,
+	"condition_note" varchar(500),
+	"import_batch_id" integer,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "items_rbcn_accession_no_unique" UNIQUE("accession_no"),
+	CONSTRAINT "items_rbcn_barcode_unique" UNIQUE("barcode")
 );
 --> statement-breakpoint
 CREATE TABLE "circulation_rules" (
@@ -358,9 +451,11 @@ ALTER TABLE "patrons" ADD CONSTRAINT "patrons_institution_id_institutions_id_fk"
 ALTER TABLE "patrons" ADD CONSTRAINT "patrons_department_id_departments_id_fk" FOREIGN KEY ("department_id") REFERENCES "public"."departments"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "patrons" ADD CONSTRAINT "patrons_course_id_courses_id_fk" FOREIGN KEY ("course_id") REFERENCES "public"."courses"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "bib_records" ADD CONSTRAINT "bib_records_item_type_id_item_types_id_fk" FOREIGN KEY ("item_type_id") REFERENCES "public"."item_types"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "bib_records" ADD CONSTRAINT "bib_records_import_batch_id_import_batches_id_fk" FOREIGN KEY ("import_batch_id") REFERENCES "public"."import_batches"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "bib_records" ADD CONSTRAINT "bib_records_department_id_departments_id_fk" FOREIGN KEY ("department_id") REFERENCES "public"."departments"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "items" ADD CONSTRAINT "items_bib_id_bib_records_id_fk" FOREIGN KEY ("bib_id") REFERENCES "public"."bib_records"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "items" ADD CONSTRAINT "items_library_id_libraries_id_fk" FOREIGN KEY ("library_id") REFERENCES "public"."libraries"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "items" ADD CONSTRAINT "items_import_batch_id_import_batches_id_fk" FOREIGN KEY ("import_batch_id") REFERENCES "public"."import_batches"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "items" ADD CONSTRAINT "items_vendor_id_vendors_id_fk" FOREIGN KEY ("vendor_id") REFERENCES "public"."vendors"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "circulation_rules" ADD CONSTRAINT "circulation_rules_library_id_libraries_id_fk" FOREIGN KEY ("library_id") REFERENCES "public"."libraries"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "circulation_rules" ADD CONSTRAINT "circulation_rules_category_id_patron_categories_id_fk" FOREIGN KEY ("category_id") REFERENCES "public"."patron_categories"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -371,6 +466,7 @@ ALTER TABLE "fines" ADD CONSTRAINT "fines_created_by_users_id_fk" FOREIGN KEY ("
 ALTER TABLE "holds" ADD CONSTRAINT "holds_patron_id_patrons_id_fk" FOREIGN KEY ("patron_id") REFERENCES "public"."patrons"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "holds" ADD CONSTRAINT "holds_bib_id_bib_records_id_fk" FOREIGN KEY ("bib_id") REFERENCES "public"."bib_records"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "holds" ADD CONSTRAINT "holds_item_id_items_id_fk" FOREIGN KEY ("item_id") REFERENCES "public"."items"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "patrons" ADD CONSTRAINT "patrons_import_batch_id_import_batches_id_fk" FOREIGN KEY ("import_batch_id") REFERENCES "public"."import_batches"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "import_batches" ADD CONSTRAINT "import_batches_imported_by_users_id_fk" FOREIGN KEY ("imported_by") REFERENCES "public"."users"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "loans" ADD CONSTRAINT "loans_item_id_items_id_fk" FOREIGN KEY ("item_id") REFERENCES "public"."items"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "loans" ADD CONSTRAINT "loans_patron_id_patrons_id_fk" FOREIGN KEY ("patron_id") REFERENCES "public"."patrons"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
@@ -383,7 +479,6 @@ ALTER TABLE "payments" ADD CONSTRAINT "payments_received_by_users_id_fk" FOREIGN
 CREATE INDEX "idx_sessions_expires_at" ON "sessions" USING btree ("expires_at");--> statement-breakpoint
 CREATE INDEX "idx_patrons_status" ON "patrons" USING btree ("status");--> statement-breakpoint
 CREATE INDEX "idx_patrons_card_no" ON "patrons" USING btree ("card_no");--> statement-breakpoint
-CREATE INDEX "idx_patrons_roll_no" ON "patrons" USING btree ("roll_no");--> statement-breakpoint
 CREATE INDEX "idx_patrons_employee_id" ON "patrons" USING btree ("employee_id");--> statement-breakpoint
 CREATE INDEX "idx_bib_records_isbn" ON "bib_records" USING btree ("isbn");--> statement-breakpoint
 CREATE INDEX "idx_bib_records_title" ON "bib_records" USING btree ("title");--> statement-breakpoint
@@ -545,7 +640,6 @@ CREATE VIEW "public"."v_patron_summary" AS (
   SELECT 
     p.id AS patron_id,
     p.card_no,
-    p.roll_no,
     p.employee_id,
     p.first_name || ' ' || COALESCE(p.last_name, '') AS full_name,
     p.patron_type,

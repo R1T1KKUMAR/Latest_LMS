@@ -13,6 +13,7 @@ import { loginStaff } from "@/services/auth";
 import { getSession } from "@/services/session";
 import {
   createStaffUser,
+  deleteStaffUser,
   getRolesWithPermissions,
   getStaffUserById,
   listStaffUsers,
@@ -38,7 +39,7 @@ describe("Phase 4: RBAC & Permission Matrix Verification Suite", () => {
 
   let superAdminUserId: number;
   let _libAdminUserId: number;
-  let _librarianUserId: number;
+  let librarianUserId: number;
   let asstLibrarianUserId: number;
 
   beforeAll(async () => {
@@ -92,7 +93,7 @@ describe("Phase 4: RBAC & Permission Matrix Verification Suite", () => {
 
     const libLogin = await loginStaff({ username: "librarian", password: "Lib@123" }, db);
     librarianSessionId = libLogin.session?.id as string;
-    _librarianUserId = libLogin.user?.id as number;
+    librarianUserId = libLogin.user?.id as number;
 
     const asstLogin = await loginStaff({ username: "assistant", password: "Asst@123" }, db);
     asstLibrarianSessionId = asstLogin.session?.id as string;
@@ -474,11 +475,74 @@ describe("Phase 4: RBAC & Permission Matrix Verification Suite", () => {
       expect(newLogin.success).toBe(true);
     });
 
-    it("confirms staff accounts are never deleted per FR-AU-04", async () => {
+    it("prohibits self-deletion of an account", async () => {
+      const result = await deleteStaffUser(
+        superAdminUserId,
+        { actorId: superAdminUserId, actorName: "System Administrator" },
+        db,
+      );
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("cannot delete your own account");
+    });
+
+    it("prohibits deleting the primary Super Administrator account", async () => {
+      const result = await deleteStaffUser(
+        superAdminUserId,
+        { actorId: librarianUserId, actorName: "Head Librarian" },
+        db,
+      );
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("primary Super Administrator");
+    });
+
+    it("blocks deletion of a staff account with linked circulation transactions", async () => {
+      const result = await deleteStaffUser(
+        librarianUserId,
+        { actorId: superAdminUserId, actorName: "System Administrator" },
+        db,
+      );
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("issued loans");
+    });
+
+    it("allows Super Administrator to delete an unused staff account", async () => {
+      // Create an active session for createdStaffId
+      const login = await loginStaff(
+        { username: "new_desk_assistant", password: "BrandNewPassword@2026" },
+        db,
+      );
+      expect(login.success).toBe(true);
+      const sessionId = login.session?.id as string;
+
+      const deleteResult = await deleteStaffUser(
+        createdStaffId,
+        { actorId: superAdminUserId, actorName: "System Administrator" },
+        db,
+      );
+      expect(deleteResult.success).toBe(true);
+
+      // Verify user is gone
       const user = await getStaffUserById(createdStaffId, db);
-      expect(user).toBeDefined();
-      expect(user?.id).toBe(createdStaffId);
-      // FR-AU-04 rule: users service explicitly has no deleteStaffUser function.
+      expect(user).toBeNull();
+
+      // Verify sessions are invalidated
+      const sessionAfter = await getSession(sessionId, db);
+      expect(sessionAfter).toBeNull();
+
+      // Verify login is impossible
+      const relogin = await loginStaff(
+        { username: "new_desk_assistant", password: "BrandNewPassword@2026" },
+        db,
+      );
+      expect(relogin.success).toBe(false);
+
+      // Verify audit log entry exists
+      const audit = await db
+        .select()
+        .from(schema.auditLogs)
+        .where(eq(schema.auditLogs.action, "STAFF_USER_DELETED"));
+      expect(audit.length).toBeGreaterThan(0);
+      expect(audit[0].entityId).toBe(String(createdStaffId));
     });
   });
 });

@@ -1,11 +1,11 @@
 import { eq } from "drizzle-orm";
 import type React from "react";
 import { ForbiddenCard } from "@/components/auth/ForbiddenCard";
-import { StaffSidebar } from "@/components/layout/StaffSidebar";
-import { TopNav } from "@/components/layout/TopNav";
+import { StaffWorkspaceShell } from "@/components/layout/StaffWorkspaceShell";
 import { db } from "@/db";
 import * as schema from "@/db/schema";
 import { requirePageAuth } from "@/lib/auth";
+import { getCachedLibraries } from "@/lib/master-data-cache";
 
 const libraryNameCache = new Map<number, string>();
 
@@ -29,7 +29,7 @@ export default async function StaffLayout({ children }: { children: React.ReactN
 
   if (!auth.authorized) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-100 p-6">
+      <div className="min-h-screen flex items-center justify-center bg-slate-100 p-4 sm:p-6">
         <ForbiddenCard
           title="Staff Authentication Required"
           message="You must be signed in with an active staff account to access the staff workspace."
@@ -40,33 +40,29 @@ export default async function StaffLayout({ children }: { children: React.ReactN
 
   const staffContext = auth.context;
 
-  // Resolve Home Library Name (from RAM cache)
-  const libraryName = await getCachedLibraryName(staffContext.user.libraryId);
+  // Resolve Home Library & all active libraries in parallel
+  const [libraryName, allLibraries] = await Promise.all([
+    getCachedLibraryName(staffContext.user.libraryId),
+    getCachedLibraries(),
+  ]);
+
+  const currentLib = allLibraries.find((l) => l.id === staffContext.user.libraryId);
+  const isAvailable = currentLib?.isLibrarianAvailable ?? staffContext.user.isAvailable ?? true;
 
   return (
-    <div className="min-h-screen flex bg-slate-50 text-slate-900">
-      {/* Permission-filtered Sidebar (FR-AU-02, UI-2) */}
-      <StaffSidebar
-        userPermissions={staffContext.permissions}
-        roleName={staffContext.user.roleName}
-      />
-
-      {/* Main Workspace Body */}
-      <div className="flex-1 flex flex-col min-w-0">
-        <TopNav
-          userName={staffContext.user.fullName}
-          userRole={staffContext.user.roleName}
-          roleCode={staffContext.user.roleCode}
-          libraryName={libraryName}
-          csrfToken={staffContext.session.csrfToken}
-        />
-
-        <main className="flex-1 p-6 sm:p-8 max-w-7xl w-full mx-auto">{children}</main>
-
-        <footer className="border-t border-slate-200 bg-white py-3 text-center text-xs text-slate-500">
-          RBMI Group of Institutions &bull; Campus Central Library System &bull; Version 1.0
-        </footer>
-      </div>
-    </div>
+    <StaffWorkspaceShell
+      userPermissions={staffContext.permissions}
+      roleName={staffContext.user.roleName}
+      userName={staffContext.user.fullName}
+      userRole={staffContext.user.roleName}
+      roleCode={staffContext.user.roleCode}
+      libraryName={libraryName}
+      libraryId={staffContext.user.libraryId}
+      isAvailable={isAvailable}
+      libraries={allLibraries}
+      csrfToken={staffContext.session.csrfToken}
+    >
+      {children}
+    </StaffWorkspaceShell>
   );
 }

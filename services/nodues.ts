@@ -45,7 +45,6 @@ export interface NoDuesEligibilityResult {
   patron: {
     id: number;
     cardNo: string;
-    rollNo: string | null;
     employeeId: string | null;
     firstName: string;
     lastName: string | null;
@@ -96,7 +95,6 @@ export interface CertificateDetails {
   patron: {
     id: number;
     cardNo: string;
-    rollNo: string | null;
     employeeId: string | null;
     fullName: string;
     patronType: string;
@@ -139,7 +137,6 @@ export async function checkNoDuesEligibility(
     .select({
       id: schema.patrons.id,
       cardNo: schema.patrons.cardNo,
-      rollNo: schema.patrons.rollNo,
       employeeId: schema.patrons.employeeId,
       firstName: schema.patrons.firstName,
       lastName: schema.patrons.lastName,
@@ -153,13 +150,12 @@ export async function checkNoDuesEligibility(
       institutionName: schema.institutions.name,
     })
     .from(schema.patrons)
-    .innerJoin(schema.patronCategories, eq(schema.patrons.categoryId, schema.patronCategories.id))
-    .leftJoin(schema.departments, eq(schema.patrons.departmentId, schema.departments.id))
-    .leftJoin(schema.institutions, eq(schema.patrons.institutionId, schema.institutions.id));
+    .innerJoin(schema.patronCategories, eq(schema.patronCategories.id, schema.patrons.categoryId))
+    .leftJoin(schema.departments, eq(schema.departments.id, schema.patrons.departmentId))
+    .leftJoin(schema.institutions, eq(schema.institutions.id, schema.patrons.institutionId));
 
   const whereConditions = [
     eq(schema.patrons.cardNo, term),
-    eq(schema.patrons.rollNo, term),
     eq(schema.patrons.employeeId, term),
     eq(schema.patrons.username, term),
   ];
@@ -265,7 +261,6 @@ export async function checkNoDuesEligibility(
     patron: {
       id: patron.id,
       cardNo: patron.cardNo,
-      rollNo: patron.rollNo,
       employeeId: patron.employeeId,
       firstName: patron.firstName,
       lastName: patron.lastName,
@@ -427,7 +422,6 @@ export async function getNoDuesCertificateDetails(
     .select({
       id: schema.patrons.id,
       cardNo: schema.patrons.cardNo,
-      rollNo: schema.patrons.rollNo,
       employeeId: schema.patrons.employeeId,
       firstName: schema.patrons.firstName,
       lastName: schema.patrons.lastName,
@@ -441,17 +435,17 @@ export async function getNoDuesCertificateDetails(
       institutionName: schema.institutions.name,
     })
     .from(schema.patrons)
-    .innerJoin(schema.patronCategories, eq(schema.patrons.categoryId, schema.patronCategories.id))
-    .leftJoin(schema.departments, eq(schema.patrons.departmentId, schema.departments.id))
-    .leftJoin(schema.courses, eq(schema.patrons.courseId, schema.courses.id))
-    .leftJoin(schema.institutions, eq(schema.patrons.institutionId, schema.institutions.id));
+    .innerJoin(schema.patronCategories, eq(schema.patronCategories.id, schema.patrons.categoryId))
+    .leftJoin(schema.departments, eq(schema.departments.id, schema.patrons.departmentId))
+    .leftJoin(schema.courses, eq(schema.courses.id, schema.patrons.courseId))
+    .leftJoin(schema.institutions, eq(schema.institutions.id, schema.patrons.institutionId));
 
   let patronsMatched = [];
   if (patronId) {
     patronsMatched = await patronQuery.where(eq(schema.patrons.id, patronId)).limit(1);
   } else {
     patronsMatched = await patronQuery
-      .where(or(eq(schema.patrons.cardNo, term), eq(schema.patrons.rollNo, term)))
+      .where(or(eq(schema.patrons.cardNo, term), eq(schema.patrons.employeeId, term)))
       .limit(1);
   }
 
@@ -502,7 +496,6 @@ export async function getNoDuesCertificateDetails(
     patron: {
       id: patron.id,
       cardNo: patron.cardNo,
-      rollNo: patron.rollNo,
       employeeId: patron.employeeId,
       fullName: [patron.firstName, patron.lastName].filter(Boolean).join(" "),
       patronType: patron.patronType,

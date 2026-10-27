@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert } from "@/components/ui/Alert";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -21,6 +21,88 @@ export function LoginPageClient() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // Database connectivity state per FR-ST-02
+  const [dbState, setDbState] = useState<{
+    reachable: boolean;
+    sanitizedUrl?: string;
+    errorMessage?: string;
+    checked: boolean;
+    restored?: boolean;
+  }>({
+    reachable: true,
+    checked: false,
+  });
+  const [isCheckingDb, setIsCheckingDb] = useState(false);
+  const pollTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const checkDbHealth = useCallback(async (isManualRetry = false) => {
+    if (isManualRetry) setIsCheckingDb(true);
+    try {
+      const res = await fetch("/api/health", { cache: "no-store" });
+      const data = await res.json();
+      const dbCheck = data.checks?.database;
+
+      if (res.ok && dbCheck?.connected) {
+        setDbState((prev) => {
+          const wasDown = prev.checked && !prev.reachable;
+          return {
+            reachable: true,
+            sanitizedUrl: dbCheck.sanitizedUrl,
+            errorMessage: undefined,
+            checked: true,
+            restored: wasDown,
+          };
+        });
+      } else {
+        const errorMsg = dbCheck?.error || "Connection refused or unreachable";
+        const url = dbCheck?.sanitizedUrl || "postgresql://[host]/[db]";
+        setDbState({
+          reachable: false,
+          sanitizedUrl: url,
+          errorMessage: errorMsg,
+          checked: true,
+          restored: false,
+        });
+      }
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error ? err.message : "Network failure connecting to health endpoint";
+      setDbState((prev) => ({
+        reachable: false,
+        sanitizedUrl: prev.sanitizedUrl || "postgresql://[host]/[db]",
+        errorMessage: msg,
+        checked: true,
+        restored: false,
+      }));
+    } finally {
+      if (isManualRetry) setIsCheckingDb(false);
+    }
+  }, []);
+
+  // Initial check on mount
+  useEffect(() => {
+    checkDbHealth();
+  }, [checkDbHealth]);
+
+  // Set up auto-retry polling when database is unreachable (FR-ST-02: recovers without restart)
+  useEffect(() => {
+    if (!dbState.reachable) {
+      pollTimerRef.current = setInterval(() => {
+        checkDbHealth();
+      }, 5000);
+    } else if (pollTimerRef.current) {
+      clearInterval(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+
+    return () => {
+      if (pollTimerRef.current) {
+        clearInterval(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
+    };
+  }, [dbState.reachable, checkDbHealth]);
+
   const handleStaffLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -37,6 +119,19 @@ export function LoginPageClient() {
       });
 
       const data = await res.json();
+
+      if (res.status === 503 || data.dbUnreachable) {
+        setDbState({
+          reachable: false,
+          sanitizedUrl: data.dbUrl || "postgresql://[host]/[db]",
+          errorMessage: data.error || "Database unreachable",
+          checked: true,
+          restored: false,
+        });
+        setError(null);
+        return;
+      }
+
       if (!res.ok || !data.success) {
         setError(data.error || "Invalid username or password");
       } else {
@@ -66,6 +161,19 @@ export function LoginPageClient() {
       });
 
       const data = await res.json();
+
+      if (res.status === 503 || data.dbUnreachable) {
+        setDbState({
+          reachable: false,
+          sanitizedUrl: data.dbUrl || "postgresql://[host]/[db]",
+          errorMessage: data.error || "Database unreachable",
+          checked: true,
+          restored: false,
+        });
+        setError(null);
+        return;
+      }
+
       if (!res.ok || !data.success) {
         setError(data.error || "Invalid credentials");
       } else {
@@ -80,7 +188,7 @@ export function LoginPageClient() {
   };
 
   return (
-    <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
+    <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 sm:p-8 shadow-sm">
       <div className="text-center">
         <span className="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-blue-900 text-lg font-bold text-white shadow-xs">
           LMS
@@ -92,6 +200,64 @@ export function LoginPageClient() {
           RBMI Group of Institutions Campus Library System
         </p>
       </div>
+
+      {/* FR-ST-02: Database Unreachable Diagnostic Banner */}
+      {!dbState.reachable && (
+        <div
+          className="mt-5 rounded-xl border border-red-300 bg-red-50 p-4 text-xs text-red-900 shadow-xs"
+          role="alert"
+        >
+          <div className="flex items-start space-x-2.5">
+            <span className="text-lg leading-none select-none">🚨</span>
+            <div className="flex-1 space-y-1.5">
+              <h3 className="font-bold text-red-900 text-sm">Database Not Reachable</h3>
+              <p className="text-red-800 leading-relaxed">
+                The library system cannot establish a connection to the database. Sign in is
+                temporarily disabled.
+              </p>
+              <div className="rounded-lg bg-red-100/80 p-2.5 font-mono text-[11px] text-red-950 border border-red-200 break-all space-y-1">
+                <div>
+                  <span className="font-bold text-red-900">Target URL:</span>{" "}
+                  {dbState.sanitizedUrl || "postgresql://..."}
+                </div>
+                {dbState.errorMessage && (
+                  <div>
+                    <span className="font-bold text-red-900">Error:</span> {dbState.errorMessage}
+                  </div>
+                )}
+              </div>
+              <p className="text-[11px] text-red-700 italic">
+                The system will automatically recover without restarting once the database service
+                is resumed.
+              </p>
+              <div className="pt-1 flex items-center justify-between">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => checkDbHealth(true)}
+                  disabled={isCheckingDb}
+                  className="text-red-900 border-red-300 hover:bg-red-100 font-bold text-[11px] py-1 h-auto"
+                >
+                  {isCheckingDb ? "Checking..." : "🔄 Retry Connection"}
+                </Button>
+                <span className="text-[10px] text-red-600 animate-pulse font-medium">
+                  Auto-checking every 5s...
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Connection Restored Notice */}
+      {dbState.restored && dbState.reachable && (
+        <div className="mt-4">
+          <Alert variant="success" onDismiss={() => setDbState((s) => ({ ...s, restored: false }))}>
+            ✅ Database connection restored! The library system is online. You may now sign in.
+          </Alert>
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="mt-6 flex rounded-lg bg-slate-100 p-1 text-xs font-semibold">
@@ -144,6 +310,9 @@ export function LoginPageClient() {
             value={staffUsername}
             onChange={(e) => setStaffUsername(e.target.value)}
             placeholder="e.g. admin or librarian"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
           />
 
           <Input
@@ -156,7 +325,12 @@ export function LoginPageClient() {
             placeholder="••••••••"
           />
 
-          <Button type="submit" isLoading={loading} className="w-full">
+          <Button
+            type="submit"
+            isLoading={loading}
+            disabled={loading || !dbState.reachable}
+            className="w-full"
+          >
             Sign In as Staff
           </Button>
 
@@ -190,6 +364,9 @@ export function LoginPageClient() {
             onChange={(e) => setPatronIdentifier(e.target.value)}
             placeholder="e.g. 2301430100045"
             helperText="Students use Roll No; Faculty use Employee ID or Library Card No"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
           />
 
           <Input
@@ -203,7 +380,12 @@ export function LoginPageClient() {
             helperText="Initial password equals Card / Roll Number (FR-AU-05)"
           />
 
-          <Button type="submit" isLoading={loading} className="w-full">
+          <Button
+            type="submit"
+            isLoading={loading}
+            disabled={loading || !dbState.reachable}
+            className="w-full"
+          >
             Sign In to OPAC
           </Button>
 

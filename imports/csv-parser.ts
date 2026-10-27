@@ -154,10 +154,27 @@ export function getFieldValue(
 ): string | undefined {
   const keysToTest = [canonicalKey, ...aliases].map(normalizeHeader);
 
+  // 1. Direct normalized key match
   for (const k of keysToTest) {
     if (k in raw && raw[k] !== undefined) {
       const val = raw[k].trim();
       if (val.length > 0) return val;
+    }
+  }
+
+  // 2. Fuzzy alphanumeric match (ignores underscores, dots, hyphens, spaces, and casing)
+  // E.g., "b_tech" matches "btech", "B.Tech", "BTECH", "B-Tech", "roll_no" matches "rollno"
+  const rawEntries = Object.entries(raw);
+  for (const k of keysToTest) {
+    const cleanK = k.replace(/[^a-z0-9]/gi, "").toLowerCase();
+    if (!cleanK) continue;
+
+    for (const [rawKey, rawVal] of rawEntries) {
+      const cleanRawKey = rawKey.replace(/[^a-z0-9]/gi, "").toLowerCase();
+      if (cleanK === cleanRawKey && rawVal !== undefined) {
+        const val = rawVal.trim();
+        if (val.length > 0) return val;
+      }
     }
   }
 
@@ -245,7 +262,9 @@ export function cleanPhoneNumber(phone: string | null | undefined): {
   isValid10Digit: boolean;
 } {
   if (!phone) return { number: null, isValid10Digit: false };
-  let cleaned = phone.replace(/[^\d+]/g, "").trim();
+  // Strip trailing float zeroes (.0, .00) common in Excel/pandas numeric exports
+  const str = phone.trim().replace(/\.0+$/, "");
+  let cleaned = str.replace(/[^\d+]/g, "").trim();
 
   // Strip +91 or 91 prefix if total length is 12 or 13
   if (cleaned.startsWith("+91")) {

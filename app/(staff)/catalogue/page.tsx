@@ -1,9 +1,13 @@
-import { eq, sql } from "drizzle-orm";
 import { ForbiddenCard } from "@/components/auth/ForbiddenCard";
 import { PageHeader } from "@/components/layout/PageHeader";
-import { db } from "@/db";
-import * as schema from "@/db/schema";
 import { requirePageAuth } from "@/lib/auth";
+import {
+  getCachedDepartments,
+  getCachedInstitutions,
+  getCachedItemTypes,
+  getCachedLibraries,
+} from "@/lib/master-data-cache";
+import { listIndividualCopies } from "@/services/catalogue";
 import { CatalogueClient } from "./CatalogueClient";
 
 export const metadata = {
@@ -11,7 +15,11 @@ export const metadata = {
   description: "Search, catalog, and manage titles, editions, and accessioned copies",
 };
 
-export default async function CataloguePage() {
+interface CataloguePageProps {
+  searchParams?: Promise<{ libraryId?: string; addBook?: string }>;
+}
+
+export default async function CataloguePage({ searchParams }: CataloguePageProps) {
   const auth = await requirePageAuth("CATALOG_VIEW");
 
   if (!auth.authorized) {
@@ -28,65 +36,61 @@ export default async function CataloguePage() {
 
   const staffContext = auth.context;
   const permissions = staffContext.permissions;
+  const isSuperAdmin = staffContext.user.roleCode === "SUPER_ADMIN";
+  const userLibraryId = staffContext.user.libraryId;
 
-  // Retrieve catalogue titles with copy counts and item type info
-  const [rawTitles, itemTypes, departments, libraries] = await Promise.all([
-    db
-      .select({
-        id: schema.bibRecords.id,
-        title: schema.bibRecords.title,
-        subtitle: schema.bibRecords.subtitle,
-        authors: schema.bibRecords.authors,
-        isbn: schema.bibRecords.isbn,
-        edition: schema.bibRecords.edition,
-        pubYear: schema.bibRecords.pubYear,
-        callNumber: schema.bibRecords.callNumber,
-        itemTypeId: schema.bibRecords.itemTypeId,
-        itemTypeName: schema.itemTypes.name,
-        totalCopies: sql<number>`count(${schema.items.id})::int`,
-        availableCopies: sql<number>`count(case when ${schema.items.status} = 'AVAILABLE' then 1 end)::int`,
-      })
-      .from(schema.bibRecords)
-      .innerJoin(schema.itemTypes, eq(schema.bibRecords.itemTypeId, schema.itemTypes.id))
-      .leftJoin(schema.items, eq(schema.bibRecords.id, schema.items.bibId))
-      .groupBy(schema.bibRecords.id, schema.itemTypes.name)
-      .orderBy(schema.bibRecords.title)
-      .limit(100),
-    db
-      .select({ id: schema.itemTypes.id, name: schema.itemTypes.name, code: schema.itemTypes.code })
-      .from(schema.itemTypes)
-      .where(eq(schema.itemTypes.isActive, true)),
-    db
-      .select({
-        id: schema.departments.id,
-        name: schema.departments.name,
-        code: schema.departments.code,
-      })
-      .from(schema.departments)
-      .where(eq(schema.departments.isActive, true)),
-    db
-      .select({ id: schema.libraries.id, name: schema.libraries.name, code: schema.libraries.code })
-      .from(schema.libraries)
-      .where(eq(schema.libraries.isActive, true)),
+  const sp = (await searchParams) ?? {};
+  let targetLibraryId: number | undefined;
+
+  if (isSuperAdmin) {
+    if (sp.libraryId && sp.libraryId !== "all") {
+      const parsed = Number(sp.libraryId);
+      if (!Number.isNaN(parsed) && parsed > 0) {
+        targetLibraryId = parsed;
+      }
+    }
+  } else {
+    targetLibraryId = userLibraryId;
+  }
+
+  // Retrieve catalogue individual book copies (all physical volumes scoped to library) with pagination
+  const [catalogueData, institutions, itemTypes, departments, libraries] = await Promise.all([
+    listIndividualCopies({ limit: 50, page: 1, libraryId: targetLibraryId }),
+    getCachedInstitutions(),
+    getCachedItemTypes(),
+    getCachedDepartments(),
+    getCachedLibraries(),
   ]);
+
+  const currentLibrary = targetLibraryId ? libraries.find((l) => l.id === targetLibraryId) : undefined;
 
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Bibliographic Catalogue"
-        description="Search, manage titles, accession physical copies, and view real-time shelf availability."
-        badge="Catalog"
+        title={currentLibrary ? `${currentLibrary.name} — Catalogue` : "Bibliographic Catalogue"}
+        description={
+          currentLibrary
+            ? `Search, accession physical copies, and view real-time shelf availability for ${currentLibrary.name}.`
+            : "Search, manage titles, accession physical copies, and view real-time shelf availability."
+        }
+        badge={currentLibrary?.code ?? "Catalog"}
         badgeColor="indigo"
-        breadcrumbs={[{ label: "Catalogue" }, { label: "Bibliographic Records" }]}
+        breadcrumbs={[{ label: "Catalogue" }, { label: currentLibrary?.name ?? "Bibliographic Records" }]}
       />
 
       <CatalogueClient
-        initialTitles={rawTitles}
+        initialTitles={catalogueData.records}
+        initialPagination={catalogueData.pagination}
+        institutions={institutions}
         itemTypes={itemTypes}
         departments={departments}
         libraries={libraries}
         csrfToken={staffContext.session.csrfToken}
         canManage={permissions.includes("CATALOG_MANAGE")}
+        userLibraryId={userLibraryId}
+        selectedLibraryId={targetLibraryId}
+        isSuperAdmin={isSuperAdmin}
+        autoOpenAddBook={sp.addBook === "true"}
       />
     </div>
   );

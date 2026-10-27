@@ -2,6 +2,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import { requirePermission } from "@/lib/auth";
 import { validateCsrfToken } from "@/lib/csrf";
 import { type BookImportPreview, commitBookImport, validateBookCsv } from "@/services/book-import";
+import { getImportFormat } from "@/services/import-format";
 import {
   commitPatronImport,
   type PatronImportPreview,
@@ -9,6 +10,7 @@ import {
 } from "@/services/patron-import";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 300; // Allow up to 5 minutes for large batch import commits
 
 export async function POST(request: NextRequest) {
   try {
@@ -60,11 +62,14 @@ export async function POST(request: NextRequest) {
 
       if (type === "students" || type === "faculty") {
         const patronType = type === "students" ? "STUDENT" : "FACULTY";
+        const formatColumns = await getImportFormat(patronType);
         const preview = await validatePatronCsv(buffer, patronType, {
           defaultCategoryId,
+          defaultLibraryId,
           defaultInstitutionId,
           encoding,
           fileName: file.name,
+          formatColumns,
         });
 
         const result = await commitPatronImport(preview, actor);
@@ -72,11 +77,13 @@ export async function POST(request: NextRequest) {
       }
 
       if (type === "catalog" || type === "books") {
+        const formatColumns = await getImportFormat("CATALOGUE");
         const preview = await validateBookCsv(buffer, {
           defaultLibraryId,
           defaultItemTypeId: defaultCategoryId,
           encoding,
           fileName: file.name,
+          formatColumns,
         });
 
         const result = await commitBookImport(preview, actor);

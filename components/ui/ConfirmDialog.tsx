@@ -45,19 +45,19 @@ export function ConfirmDialog({
       aria-labelledby="confirm-dialog-title"
       className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-xs"
     >
-      <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
+      <div className="w-full max-w-md rounded-xl bg-white p-4 sm:p-6 shadow-xl border border-slate-200 animate-in fade-in zoom-in-95 duration-150 max-h-[90vh] overflow-y-auto">
         <h3 id="confirm-dialog-title" className="text-base font-bold text-slate-900">
           {title}
         </h3>
         <p className="mt-2 text-xs text-slate-600 leading-relaxed">{message}</p>
         {children}
 
-        <div className="mt-6 flex justify-end space-x-3">
+        <div className="mt-6 flex flex-col-reverse sm:flex-row sm:justify-end gap-2 sm:gap-3">
           <button
             type="button"
             disabled={isLoading}
             onClick={onCancel}
-            className="rounded-md border border-slate-300 bg-white px-4 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 transition"
+            className="w-full sm:w-auto text-center rounded-md border border-slate-300 bg-white px-4 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 transition"
           >
             {cancelLabel}
           </button>
@@ -66,7 +66,7 @@ export function ConfirmDialog({
             type="button"
             disabled={isLoading}
             onClick={onConfirm}
-            className={`rounded-md px-4 py-2 text-xs font-semibold text-white shadow-xs transition disabled:opacity-50 ${
+            className={`w-full sm:w-auto text-center rounded-md px-4 py-2 text-xs font-semibold text-white shadow-xs transition disabled:opacity-50 ${
               isDestructive ? "bg-red-600 hover:bg-red-700" : "bg-blue-900 hover:bg-blue-800"
             }`}
           >

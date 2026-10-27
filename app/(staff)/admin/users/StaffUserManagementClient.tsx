@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import type { StaffUserListItem } from "@/services/user";
 import { formatDateTime } from "@/lib/utils";
+import type { StaffUserListItem } from "@/services/user";
 import { ALL_PERMISSIONS, ALL_ROLES, ROLE_PERMISSIONS_MATRIX, type RoleCode } from "@/types/auth";
 
 interface RoleOption {
@@ -39,6 +39,7 @@ export function StaffUserManagementClient({
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<StaffUserListItem | null>(null);
   const [passwordResetUser, setPasswordResetUser] = useState<StaffUserListItem | null>(null);
+  const [deleteConfirmUser, setDeleteConfirmUser] = useState<StaffUserListItem | null>(null);
 
   // Form states
   const [createForm, setCreateForm] = useState({
@@ -187,6 +188,37 @@ export function StaffUserManagementClient({
     }
   };
 
+  const handleDelete = async () => {
+    if (!deleteConfirmUser) return;
+    setLoading(true);
+
+    try {
+      const res = await fetch(
+        `/api/admin/users/${deleteConfirmUser.id}?csrfToken=${encodeURIComponent(csrfToken)}`,
+        {
+          method: "DELETE",
+          headers: {
+            "x-csrf-token": csrfToken,
+          },
+        },
+      );
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        showNotification("error", data.error || "Failed to delete staff account");
+      } else {
+        const deletedUsername = deleteConfirmUser.username;
+        setUsers((prev) => prev.filter((u) => u.id !== deleteConfirmUser.id));
+        setDeleteConfirmUser(null);
+        showNotification("success", `Staff account '${deletedUsername}' deleted successfully.`);
+      }
+    } catch {
+      showNotification("error", "Network error while deleting staff account");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {notification && (
@@ -238,8 +270,9 @@ export function StaffUserManagementClient({
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div className="text-xs text-slate-500">
-              <strong className="text-slate-700">Audit Rule (FR-AU-04):</strong> Staff accounts are
-              never physically deleted. Deactivation preserves loan history and audit logs.
+              <strong className="text-slate-700">Audit Policy (FR-AU-04):</strong> Accounts with
+              circulation or financial history cannot be deleted to preserve audit logs; use
+              deactivation instead. Accounts without transactional history can be safely deleted.
             </div>
             <button
               type="button"
@@ -305,7 +338,7 @@ export function StaffUserManagementClient({
                     <td className="px-4 py-3 text-xs text-slate-500">
                       {user.lastLogin ? formatDateTime(user.lastLogin) : "Never"}
                     </td>
-                    <td className="px-4 py-3 text-right space-x-2">
+                    <td className="px-4 py-3 text-right space-x-2 whitespace-nowrap">
                       <button
                         type="button"
                         onClick={() => openEdit(user)}
@@ -320,6 +353,28 @@ export function StaffUserManagementClient({
                       >
                         Reset Password
                       </button>
+                      {user.id !== currentUserId &&
+                      user.id !== 1 &&
+                      user.username.toLowerCase() !== "admin" ? (
+                        <button
+                          type="button"
+                          onClick={() => setDeleteConfirmUser(user)}
+                          className="rounded px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 transition"
+                        >
+                          Delete
+                        </button>
+                      ) : (
+                        <span
+                          className="rounded px-2 py-1 text-xs font-medium text-slate-300 cursor-not-allowed select-none"
+                          title={
+                            user.id === currentUserId
+                              ? "You cannot delete your own account"
+                              : "Primary Super Administrator cannot be deleted"
+                          }
+                        >
+                          Delete
+                        </span>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -645,6 +700,68 @@ export function StaffUserManagementClient({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deleteConfirmUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl border border-slate-200">
+            <div className="flex items-center space-x-3 text-red-600">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-red-100">
+                <svg
+                  className="h-5 w-5 text-red-600"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  aria-hidden="true"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                  />
+                </svg>
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">Delete Staff Account</h3>
+                <p className="text-xs text-slate-500">Permanent removal confirmation</p>
+              </div>
+            </div>
+
+            <div className="mt-4 space-y-2 text-xs text-slate-600">
+              <p>
+                Are you sure you want to delete staff account{" "}
+                <strong className="font-mono text-slate-900">{deleteConfirmUser.username}</strong> (
+                {deleteConfirmUser.fullName})?
+              </p>
+              <div className="rounded-md border border-amber-200 bg-amber-50 p-2.5 text-amber-800">
+                <strong>Safety Policy:</strong> If this account has issued/returned books, created
+                fines, or collected payments, deletion is blocked to protect historical audit
+                records. Deactivate the account instead if it has transactional history.
+              </div>
+            </div>
+
+            <div className="mt-6 flex justify-end space-x-3 pt-2">
+              <button
+                type="button"
+                disabled={loading}
+                onClick={() => setDeleteConfirmUser(null)}
+                className="rounded-md border border-slate-300 px-4 py-2 font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={loading}
+                onClick={handleDelete}
+                className="rounded-md bg-red-600 px-4 py-2 font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+              >
+                {loading ? "Deleting..." : "Delete Account"}
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { Alert } from "@/components/ui/Alert";
 import { Button } from "@/components/ui/Button";
+import { downloadXlsxTemplate } from "@/lib/downloadTemplate";
 
 interface LibraryOption {
   id: number;
@@ -24,6 +25,31 @@ interface ImportClientProps {
   csrfToken: string;
   libraries: LibraryOption[];
   categories: CategoryOption[];
+  initialType?: string;
+  initialLibraryId?: number;
+  userLibraryId?: number | null;
+  isSuperAdmin?: boolean;
+  studentFormat?: Array<{
+    csvHeader: string;
+    dbField: string;
+    label: string;
+    required: boolean;
+    sampleValue: string;
+  }>;
+  facultyFormat?: Array<{
+    csvHeader: string;
+    dbField: string;
+    label: string;
+    required: boolean;
+    sampleValue: string;
+  }>;
+  catalogFormat?: Array<{
+    csvHeader: string;
+    dbField: string;
+    label: string;
+    required: boolean;
+    sampleValue: string;
+  }>;
 }
 
 export function ImportClient({
@@ -32,14 +58,32 @@ export function ImportClient({
   csrfToken,
   libraries,
   categories,
+  initialType,
+  initialLibraryId,
+  userLibraryId,
+  isSuperAdmin,
+  studentFormat,
+  facultyFormat,
+  catalogFormat,
 }: ImportClientProps) {
-  const [activeTab, setActiveTab] = useState<"students" | "faculty" | "catalog">(
-    canImportPatrons ? "students" : "catalog",
-  );
+  const initialTabState: "students" | "faculty" | "catalog" =
+    initialType === "books" || initialType === "catalog"
+      ? "catalog"
+      : initialType === "students"
+        ? "students"
+        : initialType === "faculty"
+          ? "faculty"
+          : canImportPatrons
+            ? "students"
+            : "catalog";
+
+  const [activeTab, setActiveTab] = useState<"students" | "faculty" | "catalog">(initialTabState);
   const [stage, setStage] = useState<"upload" | "preview" | "result">("upload");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [encoding, setEncoding] = useState<string>("auto");
-  const [defaultLibraryId, setDefaultLibraryId] = useState<number>(libraries[0]?.id ?? 1);
+  const [defaultLibraryId, setDefaultLibraryId] = useState<number>(
+    initialLibraryId || (userLibraryId && !isSuperAdmin ? userLibraryId : libraries[0]?.id) || 1,
+  );
   const [defaultCategoryId, setDefaultCategoryId] = useState<number>(
     categories.find((c) =>
       activeTab === "faculty" ? c.patronType === "FACULTY" : c.patronType === "STUDENT",
@@ -98,9 +142,8 @@ export function ImportClient({
       formData.append("file", selectedFile);
       formData.append("type", activeTab);
       formData.append("encoding", encoding);
-      if (activeTab === "catalog") {
-        formData.append("defaultLibraryId", String(defaultLibraryId));
-      } else {
+      formData.append("defaultLibraryId", String(defaultLibraryId));
+      if (activeTab !== "catalog") {
         formData.append("defaultCategoryId", String(defaultCategoryId));
       }
 
@@ -135,9 +178,8 @@ export function ImportClient({
       formData.append("type", activeTab);
       formData.append("encoding", encoding);
       formData.append("csrfToken", csrfToken);
-      if (activeTab === "catalog") {
-        formData.append("defaultLibraryId", String(defaultLibraryId));
-      } else {
+      formData.append("defaultLibraryId", String(defaultLibraryId));
+      if (activeTab !== "catalog") {
         formData.append("defaultCategoryId", String(defaultCategoryId));
       }
 
@@ -175,16 +217,70 @@ export function ImportClient({
     students: {
       name: "Student Rosters",
       columns:
-        "roll_no, first_name, last_name, card_no, gender, dob, institute, course, department, year, semester, mobile, email",
+        "name, card_no, gender, dob, institute, course, department, year, semester, mobile, email",
       sample:
-        "230101, Rohan, Sharma, 230101, M, 15-08-2004, RBCeT, B.Tech, CSE, 2, 4, 9876543210, rohan@example.com",
+        "Rohan Sharma, LIB000001, M, 15-08-2004, RBCET, B.Tech, CSE, 1, 1, 9876543210, rohan@example.com",
+      headers: [
+        "name",
+        "card_no",
+        "gender",
+        "dob",
+        "institute",
+        "course",
+        "department",
+        "year",
+        "semester",
+        "mobile",
+        "email",
+      ],
+      sampleRow: [
+        "Rohan Sharma",
+        "LIB000001",
+        "M",
+        "15-08-2004",
+        "RBCET",
+        "B.Tech",
+        "CSE",
+        "1",
+        "1",
+        "9876543210",
+        "rohan@example.com",
+      ],
+      fileName: "student_import_template",
     },
     faculty: {
       name: "Faculty & Staff",
       columns:
-        "employee_id, first_name, last_name, card_no, gender, dob, institute, department, category, mobile, email, joining_date",
+        "employee_id, name, card_no, gender, dob, institute, department, category, mobile, email, joining_date",
       sample:
-        "EMP-101, Dr. Priya, Verma, EMP-101, F, 22-04-1985, RBMI-ENG, CSE, FACULTY, 9812345678, priya@rbmi.in, 01-07-2020",
+        "EMP-101, Dr. Priya Verma, EMP-101, F, 22-04-1985, RBMI, CSE, FACULTY, 9812345678, priya@rbmi.in, 01-07-2020",
+      headers: [
+        "employee_id",
+        "name",
+        "card_no",
+        "gender",
+        "dob",
+        "institute",
+        "department",
+        "category",
+        "mobile",
+        "email",
+        "joining_date",
+      ],
+      sampleRow: [
+        "EMP-101",
+        "Dr. Priya Verma",
+        "EMP-101",
+        "F",
+        "22-04-1985",
+        "RBMI",
+        "CSE",
+        "FACULTY",
+        "9812345678",
+        "priya@rbmi.in",
+        "01-07-2020",
+      ],
+      fileName: "faculty_import_template",
     },
     catalog: {
       name: "Book Titles & Copies",
@@ -192,10 +288,57 @@ export function ImportClient({
         "title, isbn, authors, publisher, pub_year, item_type, library, copies, accession_no, barcode, price, location",
       sample:
         "Computer Networks, 9780132126953, Andrew S. Tanenbaum, Pearson, 2021, BOOK, CL, 2, CL001|CL002, CL001|CL002, 850.00, Shelf A-1",
+      headers: [
+        "title",
+        "isbn",
+        "authors",
+        "publisher",
+        "pub_year",
+        "item_type",
+        "library",
+        "copies",
+        "accession_no",
+        "barcode",
+        "price",
+        "location",
+      ],
+      sampleRow: [
+        "Computer Networks",
+        "9780132126953",
+        "Andrew S. Tanenbaum",
+        "Pearson",
+        "2021",
+        "BOOK",
+        "CL",
+        "2",
+        "CL001|CL002",
+        "CL001|CL002",
+        "850.00",
+        "Shelf A-1",
+      ],
+      fileName: "books_import_template",
     },
   };
 
-  const currentSpec = csvSpecs[activeTab];
+  const currentSpec = (() => {
+    const raw = csvSpecs[activeTab];
+    const fmt =
+      activeTab === "students"
+        ? studentFormat
+        : activeTab === "faculty"
+          ? facultyFormat
+          : catalogFormat;
+    if (!fmt || fmt.length === 0) return raw;
+    const headers = fmt.map((c) => c.csvHeader);
+    const sampleRow = fmt.map((c) => c.sampleValue || "-");
+    return {
+      ...raw,
+      headers,
+      sampleRow,
+      columns: headers.join(", "),
+      sample: sampleRow.join(", "),
+    };
+  })();
 
   return (
     <div className="space-y-6">
@@ -254,10 +397,22 @@ export function ImportClient({
         <div className="space-y-6">
           <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-xs">
             <h2 className="text-base font-bold text-slate-900">Upload {currentSpec.name} CSV</h2>
-            <p className="text-xs text-slate-500 mb-6">
+            <p className="text-xs text-slate-500 mb-3">
               Upload an RFC 4180 CSV file. The file will be validated in memory first with{" "}
               <strong>zero database writes</strong> before your confirmation.
             </p>
+
+            <div className="mb-6 flex items-center justify-between rounded-lg bg-slate-50 border border-slate-200 p-3 text-xs">
+              <span className="text-slate-600">
+                Uploaded the wrong file or need to rollback a previous import?
+              </span>
+              <Link
+                href="/admin/batches"
+                className="font-semibold text-blue-900 hover:underline flex items-center gap-1"
+              >
+                Manage &amp; Rollback Uploaded CSVs &rarr;
+              </Link>
+            </div>
 
             <form onSubmit={handleValidatePreview} className="space-y-5 max-w-2xl">
               {/* Dropzone */}
@@ -291,29 +446,33 @@ export function ImportClient({
               </div>
 
               {/* Options Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
-                {activeTab === "catalog" ? (
-                  <div>
-                    <label
-                      htmlFor="default-library-select"
-                      className="block text-xs font-semibold text-slate-700 mb-1"
-                    >
-                      Default Library Branch
-                    </label>
-                    <select
-                      id="default-library-select"
-                      value={defaultLibraryId}
-                      onChange={(e) => setDefaultLibraryId(Number(e.target.value))}
-                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-800 focus:border-blue-900 focus:outline-hidden"
-                    >
-                      {libraries.map((lib) => (
-                        <option key={lib.id} value={lib.id}>
-                          {lib.name} ({lib.code})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 pt-2">
+                <div>
+                  <label
+                    htmlFor="default-library-select"
+                    className="block text-xs font-semibold text-slate-700 mb-1"
+                  >
+                    Target Library Branch
+                    {!isSuperAdmin && <span className="ml-1 text-slate-400 font-normal">(Assigned)</span>}
+                  </label>
+                  <select
+                    id="default-library-select"
+                    value={defaultLibraryId}
+                    disabled={!isSuperAdmin && Boolean(userLibraryId)}
+                    onChange={(e) => setDefaultLibraryId(Number(e.target.value))}
+                    className={`w-full rounded-lg border border-slate-300 px-3 py-2 text-xs text-slate-800 focus:border-blue-900 focus:outline-hidden ${
+                      !isSuperAdmin && Boolean(userLibraryId) ? "bg-slate-100 cursor-not-allowed opacity-80" : "bg-white"
+                    }`}
+                  >
+                    {libraries.map((lib) => (
+                      <option key={lib.id} value={lib.id}>
+                        {lib.name} ({lib.code})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {activeTab !== "catalog" && (
                   <div>
                     <label
                       htmlFor="default-category-select"
@@ -372,10 +531,35 @@ export function ImportClient({
 
           {/* Format Spec */}
           <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-xs">
-            <h3 className="text-sm font-bold uppercase tracking-wider text-slate-800">
-              Format Specifications: {currentSpec.name}
-            </h3>
-            <div className="mt-4 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+              <h3 className="text-sm font-bold uppercase tracking-wider text-slate-800">
+                Format Specifications: {currentSpec.name}
+              </h3>
+              <div className="flex items-center gap-2">
+                <Link
+                  href="/admin/import-formats"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition shrink-0"
+                >
+                  <span>⚙️</span>
+                  <span>Customize Formats</span>
+                </Link>
+                <button
+                  type="button"
+                  onClick={() =>
+                    downloadXlsxTemplate({
+                      headers: currentSpec.headers,
+                      sample: currentSpec.sampleRow,
+                      fileName: currentSpec.fileName,
+                    })
+                  }
+                  className="inline-flex items-center gap-2 rounded-lg border border-emerald-600 bg-emerald-50 px-4 py-2 text-xs font-bold text-emerald-800 hover:bg-emerald-100 transition cursor-pointer shrink-0"
+                >
+                  <span>⬇️</span>
+                  <span>Download Excel Template</span>
+                </button>
+              </div>
+            </div>
+            <div className="space-y-3">
               <div>
                 <span className="text-xs font-semibold text-slate-700">Supported Headers:</span>
                 <div className="mt-1 overflow-x-auto rounded bg-slate-900 p-3 font-mono text-xs text-emerald-400">
@@ -491,7 +675,7 @@ export function ImportClient({
                       </>
                     ) : (
                       <>
-                        <th className="py-2.5 px-4">ID / Roll</th>
+                        {activeTab === "faculty" && <th className="py-2.5 px-4">Emp ID</th>}
                         <th className="py-2.5 px-4">Card No</th>
                         <th className="py-2.5 px-4">Name</th>
                         <th className="py-2.5 px-4">Course</th>
@@ -557,26 +741,22 @@ export function ImportClient({
                         </>
                       ) : (
                         <>
-                          <td className="py-2 px-4 font-mono text-slate-800">
-                            {row.data?.rollNo ||
-                              row.data?.employeeId ||
-                              row.raw.roll_no ||
-                              row.raw.employee_id ||
-                              "—"}
-                          </td>
+                          {activeTab === "faculty" && (
+                            <td className="py-2 px-4 font-mono text-slate-800">
+                              {row.data?.employeeId || row.raw.employee_id || "—"}
+                            </td>
+                          )}
                           <td className="py-2 px-4 font-mono text-slate-800">
                             {row.data?.cardNo || row.raw.card_no || "—"}
                           </td>
                           <td className="py-2 px-4 font-medium text-slate-900">
-                            {row.data?.firstName
-                              ? `${row.data.firstName} ${row.data.lastName || ""}`
-                              : row.raw.first_name || row.raw.name || "—"}
+                            {row.data?.name ||
+                              (row.data?.firstName
+                                ? `${row.data.firstName} ${row.data.lastName || ""}`.trim()
+                                : row.raw.name || row.raw.first_name || "—")}
                           </td>
                           <td className="py-2 px-4 text-slate-700">
-                            {row.data?.courseCode ||
-                              row.data?.courseName ||
-                              row.raw.course ||
-                              "—"}
+                            {row.data?.courseCode || row.data?.courseName || row.raw.course || "—"}
                           </td>
                           <td className="py-2 px-4 text-slate-700">
                             {row.data?.institutionCode ||

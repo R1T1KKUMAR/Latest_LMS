@@ -1,15 +1,9 @@
-import { and, eq, or } from "drizzle-orm";
+import { eq, or, sql } from "drizzle-orm";
 import { db as defaultDb } from "@/db";
 import * as schema from "@/db/schema";
 import { hashPassword, verifyPassword } from "@/lib/crypto";
 import { recordAuditLog } from "./audit";
-import {
-  createSession,
-  getSession,
-  invalidateAllUserSessions,
-  invalidateSession,
-  type SessionRecord,
-} from "./session";
+import { createSession, getSession, invalidateSession, type SessionRecord } from "./session";
 
 export const GENERIC_STAFF_AUTH_ERROR = "Invalid username or password";
 export const GENERIC_PATRON_AUTH_ERROR = "Invalid credentials";
@@ -40,7 +34,6 @@ export interface PatronAuthResult {
   patron?: {
     id: number;
     cardNo: string;
-    rollNo: string | null;
     employeeId: string | null;
     name: string;
     patronType: string;
@@ -68,11 +61,19 @@ export async function loginStaff(
     return { success: false, error: GENERIC_STAFF_AUTH_ERROR };
   }
 
-  // 1. Fetch user by username
+  const normalizedUsername = username.toLowerCase();
+
+  // 1. Fetch user by username (case-insensitive for reliable UX)
   const userRows = await db
     .select()
     .from(schema.users)
-    .where(eq(schema.users.username, username))
+    .where(
+      or(
+        eq(schema.users.username, normalizedUsername),
+        eq(schema.users.username, username),
+        sql`LOWER(${schema.users.username}) = ${normalizedUsername}`,
+      ),
+    )
     .limit(1);
 
   const user = userRows[0];
@@ -210,16 +211,24 @@ export async function loginPatron(
     return { success: false, error: GENERIC_PATRON_AUTH_ERROR };
   }
 
-  // 1. Fetch patron by card_no, roll_no, employee_id, or username
+  const normalizedIdentifier = identifier.toLowerCase();
+  const upperIdentifier = identifier.toUpperCase();
+
+  // 1. Fetch patron by card_no, roll_no, employee_id, or username (case-insensitive)
   const patronRows = await db
     .select()
     .from(schema.patrons)
     .where(
       or(
         eq(schema.patrons.cardNo, identifier),
-        eq(schema.patrons.rollNo, identifier),
+        eq(schema.patrons.cardNo, upperIdentifier),
         eq(schema.patrons.employeeId, identifier),
+        eq(schema.patrons.employeeId, upperIdentifier),
         eq(schema.patrons.username, identifier),
+        eq(schema.patrons.username, normalizedIdentifier),
+        sql`LOWER(${schema.patrons.username}) = ${normalizedIdentifier}`,
+        sql`LOWER(${schema.patrons.cardNo}) = ${normalizedIdentifier}`,
+        sql`LOWER(${schema.patrons.employeeId}) = ${normalizedIdentifier}`,
       ),
     )
     .limit(1);
@@ -315,7 +324,6 @@ export async function loginPatron(
     patron: {
       id: patron.id,
       cardNo: patron.cardNo,
-      rollNo: patron.rollNo,
       employeeId: patron.employeeId,
       name: fullName,
       patronType: patron.patronType,

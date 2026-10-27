@@ -1,9 +1,13 @@
-import { desc, eq } from "drizzle-orm";
 import { ForbiddenCard } from "@/components/auth/ForbiddenCard";
 import { PageHeader } from "@/components/layout/PageHeader";
-import { db } from "@/db";
-import * as schema from "@/db/schema";
 import { requirePageAuth } from "@/lib/auth";
+import {
+  getCachedCourses,
+  getCachedDepartments,
+  getCachedInstitutions,
+  getCachedPatronCategories,
+  getCachedRecentLoans,
+} from "@/lib/master-data-cache";
 import { CirculationDeskClient } from "../CirculationDeskClient";
 
 export const metadata = {
@@ -28,43 +32,20 @@ export default async function IssuePage() {
 
   const staffContext = auth.context;
 
-  // Retrieve recent active loans
-  const rawLoans = await db
-    .select({
-      id: schema.loans.id,
-      issueDate: schema.loans.issueDate,
-      dueDate: schema.loans.dueDate,
-      status: schema.loans.status,
-      firstName: schema.patrons.firstName,
-      lastName: schema.patrons.lastName,
-      patronCard: schema.patrons.cardNo,
-      title: schema.bibRecords.title,
-      accessionNo: schema.items.accessionNo,
-    })
-    .from(schema.loans)
-    .innerJoin(schema.patrons, eq(schema.loans.patronId, schema.patrons.id))
-    .innerJoin(schema.items, eq(schema.loans.itemId, schema.items.id))
-    .innerJoin(schema.bibRecords, eq(schema.items.bibId, schema.bibRecords.id))
-    .where(eq(schema.loans.status, "ISSUED"))
-    .orderBy(desc(schema.loans.issueDate))
-    .limit(50);
-
-  const checkouts = rawLoans.map((l) => ({
-    id: l.id,
-    issueDate: String(l.issueDate),
-    dueDate: String(l.dueDate),
-    status: l.status,
-    patronName: [l.firstName, l.lastName].filter(Boolean).join(" "),
-    patronCard: l.patronCard,
-    title: l.title,
-    accessionNo: l.accessionNo,
-  }));
+  // Retrieve recent active checkouts and master data in parallel with caching
+  const [checkouts, institutions, courses, departments, patronCategories] = await Promise.all([
+    getCachedRecentLoans(50),
+    getCachedInstitutions(),
+    getCachedCourses(),
+    getCachedDepartments(),
+    getCachedPatronCategories(),
+  ]);
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Book Checkout Terminal"
-        description="Scan patron card barcode, verify borrowing eligibility and active quotas, then scan item barcode to issue."
+        description="Select patron and available book from cascading category dropdowns to issue. Quotas and borrowing rules apply automatically."
         badge="Issue Desk"
         badgeColor="blue"
         breadcrumbs={[
@@ -82,6 +63,10 @@ export default async function IssuePage() {
         canMarkLost={false}
         defaultTab="issue"
         standalone={true}
+        institutions={institutions}
+        departments={departments}
+        courses={courses}
+        patronCategories={patronCategories}
       />
     </div>
   );

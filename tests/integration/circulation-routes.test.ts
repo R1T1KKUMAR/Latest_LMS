@@ -7,9 +7,12 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { GET as copyLookupGet } from "@/app/api/circulation/copy-lookup/route";
 import { POST as issuePost } from "@/app/api/circulation/issue/route";
 import { POST as markLostPost } from "@/app/api/circulation/mark-lost/route";
+import { GET as masterDataGet } from "@/app/api/circulation/master-data/route";
 import { GET as patronLookupGet } from "@/app/api/circulation/patron-lookup/route";
 import { POST as renewPost } from "@/app/api/circulation/renew/route";
 import { POST as returnPost } from "@/app/api/circulation/return/route";
+import { GET as searchBooksGet } from "@/app/api/circulation/search-books/route";
+import { GET as searchPatronsGet } from "@/app/api/circulation/search-patrons/route";
 import { setTestDb } from "@/db/client";
 import * as schema from "@/db/schema";
 import { seedDatabase } from "@/db/seed";
@@ -216,6 +219,152 @@ describe("Phase 8: Circulation API Route Handlers (Auth, CSRF, Permissions, Desk
       const data = await res.json();
       expect(data.success).toBe(true);
       expect(data.totalCharged).toBe(800); // 750 + 50
+    });
+  });
+
+  describe("5. Dynamic Circulation Search Endpoints for Dropdowns", () => {
+    it("returns patrons for circulation dropdown (searchPatronsGet)", async () => {
+      const req = new NextRequest(
+        "http://localhost:3000/api/circulation/search-patrons?query=Rahul",
+        {
+          headers: {
+            cookie: `${STAFF_SESSION_COOKIE}=${librarianSessionId}`,
+          },
+        },
+      );
+      const res = await searchPatronsGet(req);
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.success).toBe(true);
+      expect(Array.isArray(data.patrons)).toBe(true);
+      expect(data.patrons.length).toBeGreaterThan(0);
+      expect(data.patrons[0].fullName).toContain("Rahul");
+    });
+
+    it("filters patrons with active loans when hasActiveLoans=true", async () => {
+      const req = new NextRequest(
+        "http://localhost:3000/api/circulation/search-patrons?hasActiveLoans=true",
+        {
+          headers: {
+            cookie: `${STAFF_SESSION_COOKIE}=${asstLibrarianSessionId}`,
+          },
+        },
+      );
+      const res = await searchPatronsGet(req);
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.success).toBe(true);
+      expect(Array.isArray(data.patrons)).toBe(true);
+      for (const p of data.patrons) {
+        expect(p.activeLoansCount).toBeGreaterThan(0);
+      }
+    });
+
+    it("returns available books for issue dropdown (searchBooksGet status=AVAILABLE)", async () => {
+      const req = new NextRequest(
+        "http://localhost:3000/api/circulation/search-books?status=AVAILABLE",
+        {
+          headers: {
+            cookie: `${STAFF_SESSION_COOKIE}=${librarianSessionId}`,
+          },
+        },
+      );
+      const res = await searchBooksGet(req);
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.success).toBe(true);
+      expect(Array.isArray(data.books)).toBe(true);
+      expect(data.books.length).toBeGreaterThan(0);
+      for (const b of data.books) {
+        expect(b.status).toBe("AVAILABLE");
+      }
+    });
+
+    it("returns issued books for return dropdown (searchBooksGet status=ISSUED)", async () => {
+      const req = new NextRequest(
+        "http://localhost:3000/api/circulation/search-books?status=ISSUED",
+        {
+          headers: {
+            cookie: `${STAFF_SESSION_COOKIE}=${asstLibrarianSessionId}`,
+          },
+        },
+      );
+      const res = await searchBooksGet(req);
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.success).toBe(true);
+      expect(Array.isArray(data.books)).toBe(true);
+      expect(data.books.length).toBeGreaterThan(0);
+      for (const b of data.books) {
+        expect(b.status).toBe("ISSUED");
+        expect(b.loanId).toBeDefined();
+        expect(b.patronName).toBeDefined();
+      }
+    });
+
+    it("rejects unauthenticated requests to search endpoints with HTTP 401", async () => {
+      const reqPatron = new NextRequest("http://localhost:3000/api/circulation/search-patrons");
+      const resPatron = await searchPatronsGet(reqPatron);
+      expect(resPatron.status).toBe(401);
+
+      const reqBook = new NextRequest("http://localhost:3000/api/circulation/search-books");
+      const resBook = await searchBooksGet(reqBook);
+      expect(resBook.status).toBe(401);
+    });
+
+    it("matches patron by unique identifier (cardNo/employeeId)", async () => {
+      const req = new NextRequest(
+        "http://localhost:3000/api/circulation/search-patrons?identifier=2301430100045",
+        {
+          headers: {
+            cookie: `${STAFF_SESSION_COOKIE}=${librarianSessionId}`,
+          },
+        },
+      );
+      const res = await searchPatronsGet(req);
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.success).toBe(true);
+      expect(data.patrons.length).toBe(1);
+      expect(data.patrons[0].cardNo).toBe("2301430100045");
+      expect(data.patrons[0].patronType).toBe("STUDENT");
+    });
+
+    it("filters patrons by patronType (STUDENT)", async () => {
+      const req = new NextRequest(
+        "http://localhost:3000/api/circulation/search-patrons?patronType=STUDENT",
+        {
+          headers: {
+            cookie: `${STAFF_SESSION_COOKIE}=${librarianSessionId}`,
+          },
+        },
+      );
+      const res = await searchPatronsGet(req);
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.success).toBe(true);
+      expect(data.patrons.length).toBeGreaterThan(0);
+      for (const p of data.patrons) {
+        expect(p.patronType).toBe("STUDENT");
+      }
+    });
+
+    it("returns circulation master data via masterDataGet", async () => {
+      const req = new NextRequest("http://localhost:3000/api/circulation/master-data", {
+        headers: {
+          cookie: `${STAFF_SESSION_COOKIE}=${librarianSessionId}`,
+        },
+      });
+      const res = await masterDataGet(req);
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.success).toBe(true);
+      expect(Array.isArray(data.institutions)).toBe(true);
+      expect(Array.isArray(data.departments)).toBe(true);
+      expect(Array.isArray(data.courses)).toBe(true);
+      expect(Array.isArray(data.patronCategories)).toBe(true);
+      expect(data.institutions.length).toBeGreaterThan(0);
+      expect(data.departments.length).toBeGreaterThan(0);
     });
   });
 });

@@ -43,3 +43,21 @@ body {
     color: #000000 !important;
   }
 }
+
+/* Hide scrollbars while allowing touch swiping (tabs, chips, horizontal tables) */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Mobile Input Optimization - prevent iOS auto-zoom on focus (<16px trigger) */
+@media (max-width: 640px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}

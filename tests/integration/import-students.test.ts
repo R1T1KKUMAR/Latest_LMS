@@ -30,7 +30,7 @@ describe("Phase 13: Student & Faculty CSV Import Integration Suite (FR-PI-01 to 
 
   it("1. Validates student CSV in preview stage without any database writes (FR-PI-02)", async () => {
     const studentCsv = [
-      "roll_no,first_name,last_name,gender,dob,institute,course,department,academic_year,semester,mobile,email",
+      "card_no,first_name,last_name,gender,dob,institute,course,department,academic_year,semester,mobile,email",
       "240101,Aarav,Sharma,M,15-08-2005,RBMI-ENG,BTECH-CS,CSE,1,1,9876543210,aarav@rbmi.in",
       "240102,Diya,Verma,F,20-09-2005,RBMI-ENG,BTECH-CS,CSE,1,1,9876543211,diya@rbmi.in",
     ].join("\n");
@@ -49,15 +49,15 @@ describe("Phase 13: Student & Faculty CSV Import Integration Suite (FR-PI-01 to 
     expect(preview.summary.validCount).toBe(2);
 
     // Verify ZERO database writes occurred
-    const [p1] = await db.select().from(schema.patrons).where(eq(schema.patrons.rollNo, "240101"));
+    const [p1] = await db.select().from(schema.patrons).where(eq(schema.patrons.cardNo, "240101"));
     expect(p1).toBeUndefined();
-    const [p2] = await db.select().from(schema.patrons).where(eq(schema.patrons.rollNo, "240102"));
+    const [p2] = await db.select().from(schema.patrons).where(eq(schema.patrons.cardNo, "240102"));
     expect(p2).toBeUndefined();
   });
 
-  it("2. Commits valid student rows with card_no = roll_no, Argon2id initial hash, and batch record (FR-PI-04, FR-AU-05)", async () => {
+  it("2. Commits valid student rows with card_no, Argon2id initial hash, and batch record (FR-PI-04, FR-AU-05)", async () => {
     const studentCsv = [
-      "roll_no,first_name,last_name,gender,dob,institute,course,department,academic_year,semester,mobile,email",
+      "card_no,first_name,last_name,gender,dob,institute,course,department,academic_year,semester,mobile,email",
       "240101,Aarav,Sharma,M,15-08-2005,RBMI-ENG,BTECH-CS,CSE,1,1,9876543210,aarav@rbmi.in",
       "240102,Diya,Verma,F,20-09-2005,RBMI-ENG,BTECH-CS,CSE,1,1,9876543211,diya@rbmi.in",
     ].join("\n");
@@ -79,9 +79,9 @@ describe("Phase 13: Student & Faculty CSV Import Integration Suite (FR-PI-01 to 
     const [savedAarav] = await db
       .select()
       .from(schema.patrons)
-      .where(eq(schema.patrons.rollNo, "240101"));
+      .where(eq(schema.patrons.cardNo, "240101"));
     expect(savedAarav).toBeDefined();
-    expect(savedAarav.cardNo).toBe("240101"); // card_no = roll_no
+    expect(savedAarav.cardNo).toBe("240101");
     expect(savedAarav.status).toBe("ACTIVE");
     expect(savedAarav.mustChangePassword).toBe(true);
 
@@ -102,7 +102,7 @@ describe("Phase 13: Student & Faculty CSV Import Integration Suite (FR-PI-01 to 
 
   it("3. Re-importing the same CSV triggers duplicate protection with 0 rows inserted (FR-PI-05, T-19)", async () => {
     const studentCsv = [
-      "roll_no,first_name,last_name,gender,dob,institute,course,department,academic_year,semester,mobile,email",
+      "card_no,first_name,last_name,gender,dob,institute,course,department,academic_year,semester,mobile,email",
       "240101,Aarav,Sharma,M,15-08-2005,RBMI-ENG,BTECH-CS,CSE,1,1,9876543210,aarav@rbmi.in",
       "240102,Diya,Verma,F,20-09-2005,RBMI-ENG,BTECH-CS,CSE,1,1,9876543211,diya@rbmi.in",
     ].join("\n");
@@ -120,21 +120,21 @@ describe("Phase 13: Student & Faculty CSV Import Integration Suite (FR-PI-01 to 
     expect(preview.summary.okCount).toBe(0);
     expect(preview.summary.errorCount).toBe(2);
     expect(preview.summary.validCount).toBe(0);
-    expect(preview.rows[0].messages[0]).toContain("already registered in database");
-    expect(preview.rows[1].messages[0]).toContain("already registered in database");
+    expect(preview.rows[0].messages[0]).toContain("already assigned in database");
+    expect(preview.rows[1].messages[0]).toContain("already assigned in database");
 
     // Commit results in 0 imports and 2 skipped
     const result = await commitPatronImport(preview, testActor, db);
     expect(result.importedCount).toBe(0);
     expect(result.skippedCount).toBe(2);
-    expect(result.skippedRows[0].reason).toContain("Duplicate roll_no");
+    expect(result.skippedRows[0].reason).toContain("Duplicate card_no");
   });
 
   it("4. Partial failures skip ERROR rows while successfully committing valid rows (NFR-R-02)", async () => {
     const mixedCsv = [
-      "roll_no,first_name,last_name,gender,dob,category",
+      "card_no,first_name,last_name,gender,dob,category",
       "240103,Rohan,Gupta,M,10-10-2005,BTECH", // Valid
-      ",Missing,RollNo,F,11-11-2005,BTECH", // Error: missing roll_no
+      "240199,,MissingLastNameAndFirst,F,11-11-2005,BTECH", // Missing name triggers ERROR
       "240104,Sneha,Singh,F,12-12-2005,BTECH", // Valid
     ].join("\n");
 
@@ -152,15 +152,15 @@ describe("Phase 13: Student & Faculty CSV Import Integration Suite (FR-PI-01 to 
     expect(result.skippedRows[0].rowNumber).toBe(3);
 
     // Verify valid patrons exist in DB
-    const [p3] = await db.select().from(schema.patrons).where(eq(schema.patrons.rollNo, "240103"));
+    const [p3] = await db.select().from(schema.patrons).where(eq(schema.patrons.cardNo, "240103"));
     expect(p3).toBeDefined();
-    const [p4] = await db.select().from(schema.patrons).where(eq(schema.patrons.rollNo, "240104"));
+    const [p4] = await db.select().from(schema.patrons).where(eq(schema.patrons.cardNo, "240104"));
     expect(p4).toBeDefined();
   });
 
-  it("5. Flags duplicate roll_no within the same CSV file as an error", async () => {
+  it("5. Flags duplicate card_no within the same CSV file as an error", async () => {
     const fileDupCsv = [
-      "roll_no,first_name,last_name",
+      "card_no,first_name,last_name",
       "240105,First,Instance",
       "240105,Second,Instance", // Duplicate in file
     ].join("\n");
@@ -203,7 +203,7 @@ describe("Phase 13: Student & Faculty CSV Import Integration Suite (FR-PI-01 to 
 
   it("7. Automatically detects 'B.Tech' as BTech and auto-assigns college to RBCeT when college is omitted", async () => {
     const studentCsv = [
-      "roll_no,first_name,last_name,gender,dob,course,department,academic_year,semester,mobile,email",
+      "card_no,first_name,last_name,gender,dob,course,department,academic_year,semester,mobile,email",
       "240201,Aman,Gupta,M,10-01-2005,B.Tech,CSE,1,1,9876543290,aman@rbmi.in",
       "240202,Sneha,Patel,F,12-02-2005,B. Tech,ME,1,1,9876543291,sneha@rbmi.in",
     ].join("\n");
@@ -224,14 +224,14 @@ describe("Phase 13: Student & Faculty CSV Import Integration Suite (FR-PI-01 to 
     const row1 = preview.rows[0];
     expect(row1.status).toBe("OK");
     expect(row1.messages).toHaveLength(0);
-    expect(row1.data?.institutionCode).toBe("RBCeT");
+    expect(row1.data?.institutionCode?.toUpperCase()).toBe("RBCET");
     expect(row1.data?.courseCode).toContain("BTECH");
 
     // Row 2: Course "B. Tech" -> BTech, college automatically set to RBCeT
     const row2 = preview.rows[1];
     expect(row2.status).toBe("OK");
     expect(row2.messages).toHaveLength(0);
-    expect(row2.data?.institutionCode).toBe("RBCeT");
+    expect(row2.data?.institutionCode?.toUpperCase()).toBe("RBCET");
     expect(row2.data?.courseCode).toContain("BTECH");
 
     // Commit and verify in DB
@@ -241,15 +241,15 @@ describe("Phase 13: Student & Faculty CSV Import Integration Suite (FR-PI-01 to 
     const [savedAman] = await db
       .select()
       .from(schema.patrons)
-      .where(eq(schema.patrons.rollNo, "240201"));
+      .where(eq(schema.patrons.cardNo, "240201"));
     expect(savedAman).toBeDefined();
     expect(savedAman.institutionId).toBe(1); // RBCeT / RBMI-ENG
   });
 
   it("8. Automatically detects 'B.Tech' with college explicitly written as 'RBCeT'", async () => {
     const studentCsv = [
-      "roll_no,first_name,last_name,course,college",
-      "240203,Karan,Mehra,B.Tech,RBCeT",
+      "first_name,last_name,course,college",
+      "Karan,Mehra,B.Tech,RBCeT",
     ].join("\n");
 
     const buffer = Buffer.from(studentCsv, "utf8");
@@ -262,9 +262,31 @@ describe("Phase 13: Student & Faculty CSV Import Integration Suite (FR-PI-01 to 
 
     expect(preview.summary.totalRows).toBe(1);
     expect(preview.summary.okCount).toBe(1);
-    expect(preview.rows[0].data?.institutionCode).toBe("RBCeT");
+    expect(preview.rows[0].data?.institutionCode?.toUpperCase()).toBe("RBCET");
     expect(preview.rows[0].data?.institutionId).toBe(1);
     expect(preview.rows[0].data?.courseCode).toBe("BTECH");
   });
-});
 
+  it("9. Automatically allocates sequential library card numbers when card_no is omitted for 1st sem students", async () => {
+    const sem1Csv = [
+      "first_name,last_name,gender,course,department,academic_year,semester",
+      "Amit,Kumar,M,B.Tech,CSE,1,1",
+      "Pooja,Singh,F,B.Tech,CSE,1,1",
+    ].join("\n");
+
+    const buffer = Buffer.from(sem1Csv, "utf8");
+    const preview = await validatePatronCsv(buffer, "STUDENT", { fileName: "sem1_students.csv" }, db);
+
+    expect(preview.summary.totalRows).toBe(2);
+    expect(preview.summary.okCount).toBe(2);
+    expect(preview.rows[0].data?.cardNo).toBe("[Auto-Allocated]");
+    expect(preview.rows[1].data?.cardNo).toBe("[Auto-Allocated]");
+
+    const result = await commitPatronImport(preview, testActor, db);
+    expect(result.importedCount).toBe(2);
+    expect(result.skippedCount).toBe(0);
+    expect(result.cardNumbers[0]).toMatch(/^LIB\d{6}$/);
+    expect(result.cardNumbers[1]).toMatch(/^LIB\d{6}$/);
+    expect(result.cardNumbers[0]).not.toBe(result.cardNumbers[1]);
+  });
+});

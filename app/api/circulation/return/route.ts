@@ -17,7 +17,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { barcodeOrAccession, referenceDate } = body;
+    const { barcodeOrAccession, referenceDate, deskLibraryId } = body;
 
     if (
       !barcodeOrAccession ||
@@ -39,10 +39,13 @@ export async function POST(request: NextRequest) {
       {
         barcodeOrAccession: barcodeOrAccession.trim(),
         referenceDate,
+        deskLibraryId: deskLibraryId ? Number(deskLibraryId) : undefined,
       },
       {
         id: authContext.user.id,
         fullName: authContext.user.fullName,
+        libraryId: authContext.user.libraryId,
+        roleCode: authContext.user.roleCode,
         ipAddress,
       },
     );

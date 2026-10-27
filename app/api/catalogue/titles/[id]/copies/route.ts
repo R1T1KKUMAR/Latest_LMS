@@ -24,11 +24,16 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       request.headers.get("x-real-ip") ??
       undefined;
 
+    const libraryId =
+      authContext.user.roleCode === "SUPER_ADMIN"
+        ? Number(body.libraryId || authContext.user.libraryId)
+        : authContext.user.libraryId;
+
     const copies = await addCopiesToTitle(
       {
         ...body,
         bibId,
-        libraryId: Number(body.libraryId || authContext.user.libraryId),
+        libraryId,
         count: Number(body.count || 1),
       },
       {

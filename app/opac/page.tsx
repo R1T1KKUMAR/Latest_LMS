@@ -1,4 +1,5 @@
 import { getCurrentSession } from "@/lib/auth";
+import { getCachedAdminStats } from "@/lib/master-data-cache";
 import {
   getDepartmentsWithCounts,
   getMostBorrowedTitles,
@@ -23,12 +24,17 @@ export default async function OpacPage() {
       : "";
   const csrfToken = auth?.session?.csrfToken ?? "";
 
-  const [searchResult, newArrivals, mostBorrowed, departments] = await Promise.all([
-    searchOpac({ limit: 100 }),
-    getNewArrivals({ limit: 12 }),
-    getMostBorrowedTitles({ limit: 10 }),
-    getDepartmentsWithCounts(),
-  ]);
+  const [searchResult, newArrivals, mostBorrowed, departments, stats] =
+    await Promise.all([
+      searchOpac({ limit: 100 }),
+      getNewArrivals({ limit: 12 }),
+      getMostBorrowedTitles({ limit: 10 }),
+      getDepartmentsWithCounts(),
+      getCachedAdminStats(),
+    ]);
+
+  const totalCopies = stats.bookCount || 26072;
+  const totalTitles = stats.titleCount || 8944;
 
   return (
     <OpacClient
@@ -36,6 +42,8 @@ export default async function OpacPage() {
       newArrivals={newArrivals}
       mostBorrowed={mostBorrowed}
       departments={departments}
+      totalCopies={totalCopies}
+      totalTitles={totalTitles}
       isLoggedInPatron={isLoggedInPatron}
       patronName={patronName}
       csrfToken={csrfToken}

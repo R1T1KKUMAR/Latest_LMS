@@ -429,7 +429,7 @@ export function AdminFineAdjustmentClient({
                   />
                 </div>
                 <p className="text-[11px] text-slate-500">
-                  Cumulative fine amount that prevents new book loans.
+                  Cumulative fine amount that prevents new book issues.
                 </p>
               </div>
 
@@ -464,7 +464,7 @@ export function AdminFineAdjustmentClient({
               {/* Block If Overdue */}
               <div className="space-y-1.5">
                 <span className="block text-xs font-bold text-slate-700">
-                  Overdue Loan Checkout Restriction
+                  Overdue Book Checkout Restriction
                 </span>
                 <label className="flex items-center gap-2 pt-2 cursor-pointer">
                   <input
@@ -474,7 +474,7 @@ export function AdminFineAdjustmentClient({
                     className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-900"
                   />
                   <span className="text-xs font-semibold text-slate-800">
-                    Block new book issues if patron has overdue loans
+                    Block new book issues if patron has overdue books
                   </span>
                 </label>
                 <p className="text-[11px] text-slate-500">

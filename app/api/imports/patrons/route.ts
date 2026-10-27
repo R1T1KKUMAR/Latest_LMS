@@ -2,6 +2,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import { requirePermission } from "@/lib/auth";
 import { validateCsrfToken } from "@/lib/csrf";
 import { commitPatronImport, validatePatronCsv } from "@/services/patron-import";
+import { getImportFormat } from "@/services/import-format";
 
 export const dynamic = "force-dynamic";
 
@@ -41,7 +42,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const preview = await validatePatronCsv(buffer, importType, { fileName });
+    const formatColumns = await getImportFormat(importType);
+    const preview = await validatePatronCsv(buffer, importType, { fileName, formatColumns });
     const actor = { id: auth.user.id, fullName: auth.user.fullName };
     const result = await commitPatronImport(preview, actor);
 

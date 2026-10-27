@@ -60,7 +60,6 @@ describe("Authentication & Session Management Suite", () => {
     await db.insert(schema.patrons).values([
       {
         cardNo: "BLOCKED001",
-        rollNo: "ROLL_BLOCKED_01",
         firstName: "Blocked",
         lastName: "User",
         username: "blocked_user",
@@ -73,7 +72,6 @@ describe("Authentication & Session Management Suite", () => {
       },
       {
         cardNo: "EXPIRED001",
-        rollNo: "ROLL_EXPIRED_01",
         firstName: "Expired",
         lastName: "User",
         username: "expired_user",
@@ -86,7 +84,6 @@ describe("Authentication & Session Management Suite", () => {
       },
       {
         cardNo: "TEST_PATRON_01",
-        rollNo: "TEST_ROLL_01",
         firstName: "Test",
         lastName: "Patron",
         username: "test_patron_01",
@@ -208,8 +205,8 @@ describe("Authentication & Session Management Suite", () => {
   });
 
   describe("2. Patron Login Flow (FR-AU-05)", () => {
-    it("successfully logs in patron via roll number and returns mustChangePassword flag", async () => {
-      // Rahul Kumar has rollNo = 2301430100045, password = 2301430100045, mustChangePassword = true
+    it("successfully logs in patron via card number and returns mustChangePassword flag", async () => {
+      // Rahul Kumar has cardNo = 2301430100045, password = 2301430100045, mustChangePassword = true
       const result = await loginPatron(
         {
           identifier: "2301430100045",
@@ -221,7 +218,7 @@ describe("Authentication & Session Management Suite", () => {
 
       expect(result.success).toBe(true);
       expect(result.patron).toBeDefined();
-      expect(result.patron?.rollNo).toBe("2301430100045");
+      expect(result.patron?.cardNo).toBe("2301430100045");
       expect(result.mustChangePassword).toBe(true);
       expect(result.session).toBeDefined();
       expect(result.session?.userType).toBe("PATRON");

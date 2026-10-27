@@ -11,28 +11,28 @@ export async function seedDatabase(db: AnyDatabase) {
     .insert(schema.institutions)
     .values([
       {
-        code: "RBMI-ENG",
+        code: "RBCET",
         name: "RBMI College of Engineering and Technology",
         address: "Bareilly, UP",
       },
       {
-        code: "RBMI-MGMT",
-        name: "RBMI College of Management",
+        code: "RBMI",
+        name: "RBMI Business School",
         address: "Bareilly, UP",
       },
       {
-        code: "RBMI-PHARM",
+        code: "RBCP",
         name: "RBMI College of Pharmacy",
         address: "Bareilly, UP",
       },
       {
-        code: "RBMI-NURS",
+        code: "RBCN",
         name: "RBMI College of Nursing",
         address: "Bareilly, UP",
       },
       {
-        code: "RBMI-TECH",
-        name: "RBMI Institute of Technology and Management",
+        code: "RBTTI",
+        name: "Rakshpal Bahadur Teachers Training Institute",
         address: "Bareilly, UP",
       },
     ])
@@ -80,26 +80,33 @@ export async function seedDatabase(db: AnyDatabase) {
     ])
     .returning();
 
-  // 3. Departments (12 departments)
+  // 3. Departments
   const [deptCse, deptMe] = await db
     .insert(schema.departments)
     .values([
+      { institutionId: instEng.id, code: "BTECH", name: "B.Tech" },
+      { institutionId: instEng.id, code: "DIPLOMA", name: "Diploma / Polytechnic" },
       { institutionId: instEng.id, code: "CSE", name: "Computer Science and Engineering" },
       { institutionId: instEng.id, code: "IT", name: "Information Technology" },
       { institutionId: instEng.id, code: "ME", name: "Mechanical Engineering" },
       { institutionId: instEng.id, code: "CE", name: "Civil Engineering" },
       { institutionId: instEng.id, code: "ECE", name: "Electronics and Communication" },
       { institutionId: instEng.id, code: "EE", name: "Electrical Engineering" },
-      { institutionId: instMgmt.id, code: "MBA", name: "Management Studies (MBA)" },
-      { institutionId: instMgmt.id, code: "BBA", name: "Business Administration (BBA)" },
-      { institutionId: instTech.id, code: "MCA", name: "Computer Applications (MCA)" },
-      { institutionId: instTech.id, code: "BCA", name: "Computer Applications (BCA)" },
-      { institutionId: instPharm.id, code: "PHARM", name: "Pharmaceutical Sciences" },
-      { institutionId: instNurs.id, code: "NURS", name: "Nursing Sciences" },
+      { institutionId: instEng.id, code: "AI&DS", name: "Artificial Intelligence and Data Science" },
+      { institutionId: instMgmt.id, code: "MBA", name: "MBA" },
+      { institutionId: instMgmt.id, code: "BBA", name: "BBA" },
+      { institutionId: instMgmt.id, code: "MCA", name: "MCA" },
+      { institutionId: instMgmt.id, code: "BCA", name: "BCA" },
+      { institutionId: instMgmt.id, code: "BSC", name: "B.Sc" },
+      { institutionId: instMgmt.id, code: "BCOM", name: "B.Com" },
+      { institutionId: instPharm.id, code: "BPHARM", name: "B.Pharm" },
+      { institutionId: instPharm.id, code: "DPHARM", name: "D.Pharm" },
+      { institutionId: instNurs.id, code: "BSCNURS", name: "B.Sc Nursing" },
+      { institutionId: instTech.id, code: "BED", name: "B.Ed" },
     ])
     .returning();
 
-  // 4. Courses (12 courses)
+  // 4. Courses
   const [courseBtech] = await db
     .insert(schema.courses)
     .values([
@@ -108,6 +115,12 @@ export async function seedDatabase(db: AnyDatabase) {
         code: "BTECH",
         name: "Bachelor of Technology (B.Tech)",
         durationYears: 4,
+      },
+      {
+        institutionId: instEng.id,
+        code: "DIPLOMA",
+        name: "Diploma in Engineering (Polytechnic)",
+        durationYears: 3,
       },
       {
         institutionId: instEng.id,
@@ -142,49 +155,82 @@ export async function seedDatabase(db: AnyDatabase) {
       {
         institutionId: instMgmt.id,
         code: "MBA",
-        name: "Master of Business Administration",
+        name: "Master of Business Administration (MBA)",
         durationYears: 2,
       },
       {
         institutionId: instMgmt.id,
         code: "BBA",
-        name: "Bachelor of Business Administration",
+        name: "Bachelor of Business Administration (BBA)",
         durationYears: 3,
       },
       {
-        institutionId: instTech.id,
+        institutionId: instMgmt.id,
         code: "MCA",
-        name: "Master of Computer Applications",
+        name: "Master of Computer Applications (MCA)",
         durationYears: 2,
       },
       {
-        institutionId: instTech.id,
+        institutionId: instMgmt.id,
         code: "BCA",
-        name: "Bachelor of Computer Applications",
+        name: "Bachelor of Computer Applications (BCA)",
+        durationYears: 3,
+      },
+      {
+        institutionId: instMgmt.id,
+        code: "BSC",
+        name: "Bachelor of Science (B.Sc)",
+        durationYears: 3,
+      },
+      {
+        institutionId: instMgmt.id,
+        code: "BCOM",
+        name: "Bachelor of Commerce (B.Com)",
         durationYears: 3,
       },
       {
         institutionId: instPharm.id,
         code: "BPHARM",
-        name: "Bachelor of Pharmacy",
+        name: "Bachelor of Pharmacy (B.Pharm)",
         durationYears: 4,
       },
-      { institutionId: instNurs.id, code: "BSC-NURS", name: "B.Sc Nursing", durationYears: 4 },
+      {
+        institutionId: instPharm.id,
+        code: "DPHARM",
+        name: "Diploma in Pharmacy (D.Pharm)",
+        durationYears: 2,
+      },
+      {
+        institutionId: instNurs.id,
+        code: "BSCNURS",
+        name: "Bachelor of Science in Nursing (B.Sc Nursing)",
+        durationYears: 4,
+      },
+      {
+        institutionId: instTech.id,
+        code: "BED",
+        name: "Bachelor of Education (B.Ed)",
+        durationYears: 2,
+      },
     ])
     .returning();
 
-  // 5. Patron Categories (15 categories)
+  // 5. Patron Categories
   const [catBtech, catFaculty, catGuest] = await db
     .insert(schema.patronCategories)
     .values([
       { code: "BTECH", name: "B.Tech Student", patronType: "STUDENT", cardValidityYears: 4 },
+      { code: "DIPLOMA", name: "Diploma Student", patronType: "STUDENT", cardValidityYears: 3 },
       { code: "MBA", name: "MBA Student", patronType: "STUDENT", cardValidityYears: 2 },
       { code: "MCA", name: "MCA Student", patronType: "STUDENT", cardValidityYears: 2 },
       { code: "BBA", name: "BBA Student", patronType: "STUDENT", cardValidityYears: 3 },
       { code: "BCA", name: "BCA Student", patronType: "STUDENT", cardValidityYears: 3 },
+      { code: "BSC", name: "B.Sc Student", patronType: "STUDENT", cardValidityYears: 3 },
+      { code: "BCOM", name: "B.Com Student", patronType: "STUDENT", cardValidityYears: 3 },
       { code: "BPHARM", name: "B.Pharm Student", patronType: "STUDENT", cardValidityYears: 4 },
+      { code: "DPHARM", name: "D.Pharm Student", patronType: "STUDENT", cardValidityYears: 2 },
       { code: "NURSING", name: "Nursing Student", patronType: "STUDENT", cardValidityYears: 4 },
-      { code: "DIPLOMA", name: "Diploma Student", patronType: "STUDENT", cardValidityYears: 3 },
+      { code: "BED", name: "B.Ed Student", patronType: "STUDENT", cardValidityYears: 2 },
       { code: "FACULTY", name: "Faculty Member", patronType: "FACULTY", cardValidityYears: 5 },
       { code: "HOD", name: "Head of Department", patronType: "FACULTY", cardValidityYears: 5 },
       { code: "DEAN", name: "Dean / Director", patronType: "FACULTY", cardValidityYears: 5 },
@@ -708,7 +754,6 @@ export async function seedDatabase(db: AnyDatabase) {
     .values([
       {
         cardNo: "2301430100045",
-        rollNo: "2301430100045",
         patronType: "STUDENT",
         categoryId: catBtech.id,
         institutionId: instEng.id,
@@ -725,7 +770,6 @@ export async function seedDatabase(db: AnyDatabase) {
       },
       {
         cardNo: "2301430100062",
-        rollNo: "2301430100062",
         patronType: "STUDENT",
         categoryId: catBtech.id,
         institutionId: instEng.id,
@@ -742,7 +786,6 @@ export async function seedDatabase(db: AnyDatabase) {
       },
       {
         cardNo: "2201430100033",
-        rollNo: "2201430100033",
         patronType: "STUDENT",
         categoryId: catBtech.id,
         institutionId: instEng.id,

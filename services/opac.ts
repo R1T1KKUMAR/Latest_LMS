@@ -27,6 +27,9 @@ export interface OpacBookItem {
   callNumber: string | null;
   departmentId: number | null;
   departmentName: string | null;
+  institutionId?: number | null;
+  institutionCode?: string | null;
+  institutionName?: string | null;
   itemTypeId: number;
   itemTypeName: string | null;
   totalCopies: number;
@@ -65,6 +68,9 @@ export interface OpacDepartmentItem {
   id: number;
   code: string;
   name: string;
+  institutionId?: number;
+  institutionCode?: string;
+  institutionName?: string;
   titleCount: number;
   totalCopies: number;
 }
@@ -73,9 +79,24 @@ export interface SearchOpacParams {
   q?: string;
   field?: "all" | "title" | "author" | "isbn" | "call" | "subject" | "publisher";
   departmentId?: number;
+  institutionId?: number;
   onlyAvailable?: boolean;
   limit?: number;
   offset?: number;
+}
+
+// In-memory caches for heavy public OPAC landing page queries (60s TTL)
+let cachedInitialBooks: { limit: number; data: { books: OpacBookItem[]; total: number }; cachedAt: number } | null = null;
+let cachedNewArrivals: { key: string; data: OpacBookItem[]; cachedAt: number } | null = null;
+let cachedMostBorrowed: { limit: number; data: (OpacBookItem & { borrowCount: number })[]; cachedAt: number } | null = null;
+let cachedDepartmentsWithCounts: { data: OpacDepartmentItem[]; cachedAt: number } | null = null;
+const OPAC_CACHE_TTL_MS = 60 * 1000;
+
+export function invalidateOpacCache() {
+  cachedInitialBooks = null;
+  cachedNewArrivals = null;
+  cachedMostBorrowed = null;
+  cachedDepartmentsWithCounts = null;
 }
 
 /**
@@ -88,35 +109,17 @@ export async function searchOpac(
   const query = params.q?.trim().toLowerCase();
   const field = params.field || "all";
   const departmentId = params.departmentId;
+  const institutionId = params.institutionId;
   const onlyAvailable = params.onlyAvailable ?? false;
   const limit = Math.min(Math.max(params.limit ?? 50, 1), 200);
   const offset = Math.max(params.offset ?? 0, 0);
 
-  // Subquery: Aggregate copy counts per bib record
-  const itemsAgg = db
-    .select({
-      bibId: schema.items.bibId,
-      totalCopies: sql<number>`count(*)::int`.as("total_copies"),
-      availableCopies:
-        sql<number>`count(case when ${schema.items.status} = 'AVAILABLE' then 1 end)::int`.as(
-          "available_copies",
-        ),
-      issuedCopies:
-        sql<number>`count(case when ${schema.items.status} = 'ISSUED' then 1 end)::int`.as(
-          "issued_copies",
-        ),
-      reservedCopies:
-        sql<number>`count(case when ${schema.items.status} = 'RESERVED' then 1 end)::int`.as(
-          "reserved_copies",
-        ),
-      referenceCopies:
-        sql<number>`count(case when ${schema.items.status} = 'REFERENCE_ONLY' then 1 end)::int`.as(
-          "reference_copies",
-        ),
-    })
-    .from(schema.items)
-    .groupBy(schema.items.bibId)
-    .as("items_agg");
+  // Serve default catalogue landing page from 60s RAM cache
+  const isDefaultLanding = !query && !departmentId && !institutionId && !onlyAvailable && offset === 0;
+  const now = Date.now();
+  if (isDefaultLanding && cachedInitialBooks && cachedInitialBooks.limit === limit && now - cachedInitialBooks.cachedAt < OPAC_CACHE_TTL_MS) {
+    return cachedInitialBooks.data;
+  }
 
   let baseQuery = db
     .select({
@@ -132,18 +135,16 @@ export async function searchOpac(
       callNumber: schema.bibRecords.callNumber,
       departmentId: schema.bibRecords.departmentId,
       departmentName: schema.departments.name,
+      institutionId: schema.departments.institutionId,
+      institutionCode: schema.institutions.code,
+      institutionName: schema.institutions.name,
       itemTypeId: schema.bibRecords.itemTypeId,
       itemTypeName: schema.itemTypes.name,
-      totalCopies: sql<number>`coalesce(${itemsAgg.totalCopies}, 0)::int`,
-      availableCopies: sql<number>`coalesce(${itemsAgg.availableCopies}, 0)::int`,
-      issuedCopies: sql<number>`coalesce(${itemsAgg.issuedCopies}, 0)::int`,
-      reservedCopies: sql<number>`coalesce(${itemsAgg.reservedCopies}, 0)::int`,
-      referenceCopies: sql<number>`coalesce(${itemsAgg.referenceCopies}, 0)::int`,
     })
     .from(schema.bibRecords)
     .leftJoin(schema.departments, eq(schema.bibRecords.departmentId, schema.departments.id))
-    .leftJoin(schema.itemTypes, eq(schema.bibRecords.itemTypeId, schema.itemTypes.id))
-    .leftJoin(itemsAgg, eq(schema.bibRecords.id, itemsAgg.bibId));
+    .leftJoin(schema.institutions, eq(schema.departments.institutionId, schema.institutions.id))
+    .leftJoin(schema.itemTypes, eq(schema.bibRecords.itemTypeId, schema.itemTypes.id));
 
   const conditions = [];
 
@@ -151,8 +152,18 @@ export async function searchOpac(
     conditions.push(eq(schema.bibRecords.departmentId, departmentId));
   }
 
+  if (institutionId) {
+    conditions.push(eq(schema.departments.institutionId, institutionId));
+  }
+
   if (onlyAvailable) {
-    conditions.push(sql`coalesce(${itemsAgg.availableCopies}, 0) > 0`);
+    conditions.push(
+      sql`exists (
+        select 1 from ${schema.items} i
+        where i.bib_id = ${schema.bibRecords.id}
+          and i.status = 'AVAILABLE'
+      )`,
+    );
   }
 
   if (query) {
@@ -208,30 +219,64 @@ export async function searchOpac(
 
   const rows = await baseQuery.orderBy(asc(schema.bibRecords.title)).limit(limit).offset(offset);
 
-  return {
-    books: rows.map((r: any) => ({
-      id: r.id,
-      title: r.title,
-      subtitle: r.subtitle,
-      authors: r.authors,
-      isbn: r.isbn,
-      edition: r.edition,
-      pubYear: r.pubYear,
-      publisher: r.publisher,
-      subject: r.subject,
-      callNumber: r.callNumber,
-      departmentId: r.departmentId,
-      departmentName: r.departmentName,
-      itemTypeId: r.itemTypeId,
-      itemTypeName: r.itemTypeName,
-      totalCopies: Number(r.totalCopies || 0),
-      availableCopies: Number(r.availableCopies || 0),
-      issuedCopies: Number(r.issuedCopies || 0),
-      reservedCopies: Number(r.reservedCopies || 0),
-      referenceCopies: Number(r.referenceCopies || 0),
-    })),
+  if (rows.length === 0) {
+    return { books: [], total: 0 };
+  }
+
+  // Aggregate copy status ONLY for the matching paged bib records (avoids full items table scan)
+  const bibIds = rows.map((r: any) => r.id);
+  const countsRows = await db
+    .select({
+      bibId: schema.items.bibId,
+      totalCopies: sql<number>`count(*)::int`,
+      availableCopies:
+        sql<number>`count(case when ${schema.items.status} = 'AVAILABLE' then 1 end)::int`,
+      issuedCopies:
+        sql<number>`count(case when ${schema.items.status} = 'ISSUED' then 1 end)::int`,
+      reservedCopies:
+        sql<number>`count(case when ${schema.items.status} = 'RESERVED' then 1 end)::int`,
+      referenceCopies:
+        sql<number>`count(case when ${schema.items.status} = 'REFERENCE_ONLY' then 1 end)::int`,
+    })
+    .from(schema.items)
+    .where(inArray(schema.items.bibId, bibIds))
+    .groupBy(schema.items.bibId);
+
+  const countsMap = new Map<number, any>(countsRows.map((c: any) => [c.bibId, c]));
+
+  const result = {
+    books: rows.map((r: any) => {
+      const c = countsMap.get(r.id);
+      return {
+        id: r.id,
+        title: r.title,
+        subtitle: r.subtitle,
+        authors: r.authors,
+        isbn: r.isbn,
+        edition: r.edition,
+        pubYear: r.pubYear,
+        publisher: r.publisher,
+        subject: r.subject,
+        callNumber: r.callNumber,
+        departmentId: r.departmentId,
+        departmentName: r.departmentName,
+        itemTypeId: r.itemTypeId,
+        itemTypeName: r.itemTypeName,
+        totalCopies: Number(c?.totalCopies || 0),
+        availableCopies: Number(c?.availableCopies || 0),
+        issuedCopies: Number(c?.issuedCopies || 0),
+        reservedCopies: Number(c?.reservedCopies || 0),
+        referenceCopies: Number(c?.referenceCopies || 0),
+      };
+    }),
     total: rows.length,
   };
+
+  if (isDefaultLanding) {
+    cachedInitialBooks = { limit, data: result, cachedAt: now };
+  }
+
+  return result;
 }
 
 /**
@@ -361,9 +406,16 @@ export async function getNewArrivals(
   db: DbInstance = defaultDb,
 ): Promise<OpacBookItem[]> {
   const limit = options.limit ?? 20;
+  const daysOption = options.days;
+  const cacheKey = `${daysOption ?? "default"}_${limit}`;
+  const now = Date.now();
+
+  if (cachedNewArrivals && cachedNewArrivals.key === cacheKey && now - cachedNewArrivals.cachedAt < OPAC_CACHE_TTL_MS) {
+    return cachedNewArrivals.data;
+  }
 
   // Resolve NEW_ARRIVAL_DAYS setting (defaults to 30)
-  let days = options.days;
+  let days = daysOption;
   if (!days) {
     const settingRows = await db
       .select({ val: schema.systemSettings.settingValue })
@@ -437,7 +489,7 @@ export async function getNewArrivals(
     .orderBy(desc(schema.bibRecords.createdAt))
     .limit(limit);
 
-  return rows.map((r: any) => ({
+  const data = rows.map((r: any) => ({
     id: r.id,
     title: r.title,
     subtitle: r.subtitle,
@@ -458,6 +510,9 @@ export async function getNewArrivals(
     reservedCopies: Number(r.reservedCopies || 0),
     referenceCopies: Number(r.referenceCopies || 0),
   }));
+
+  cachedNewArrivals = { key: cacheKey, data, cachedAt: now };
+  return data;
 }
 
 /**
@@ -468,6 +523,11 @@ export async function getMostBorrowedTitles(
   db: DbInstance = defaultDb,
 ): Promise<(OpacBookItem & { borrowCount: number })[]> {
   const limit = options.limit ?? 10;
+  const now = Date.now();
+
+  if (cachedMostBorrowed && cachedMostBorrowed.limit === limit && now - cachedMostBorrowed.cachedAt < OPAC_CACHE_TTL_MS) {
+    return cachedMostBorrowed.data;
+  }
 
   // Subquery: loan count per bib record
   const loanAgg = db
@@ -537,7 +597,7 @@ export async function getMostBorrowedTitles(
     .orderBy(desc(loanAgg.borrowCount))
     .limit(limit);
 
-  return rows.map((r: any) => ({
+  const data = rows.map((r: any) => ({
     id: r.id,
     title: r.title,
     subtitle: r.subtitle,
@@ -559,6 +619,9 @@ export async function getMostBorrowedTitles(
     reservedCopies: Number(r.reservedCopies || 0),
     referenceCopies: Number(r.referenceCopies || 0),
   }));
+
+  cachedMostBorrowed = { limit, data, cachedAt: now };
+  return data;
 }
 
 /**
@@ -567,35 +630,56 @@ export async function getMostBorrowedTitles(
 export async function getDepartmentsWithCounts(
   db: DbInstance = defaultDb,
 ): Promise<OpacDepartmentItem[]> {
+  const now = Date.now();
+  if (cachedDepartmentsWithCounts && now - cachedDepartmentsWithCounts.cachedAt < OPAC_CACHE_TTL_MS) {
+    return cachedDepartmentsWithCounts.data;
+  }
+
   const rows = await db
     .select({
       id: schema.departments.id,
+      institutionId: schema.departments.institutionId,
+      institutionCode: schema.institutions.code,
+      institutionName: schema.institutions.name,
       code: schema.departments.code,
       name: schema.departments.name,
       titleCount: sql<number>`count(distinct ${schema.bibRecords.id})::int`,
       totalCopies: sql<number>`count(${schema.items.id})::int`,
     })
     .from(schema.departments)
+    .leftJoin(schema.institutions, eq(schema.departments.institutionId, schema.institutions.id))
     .leftJoin(schema.bibRecords, eq(schema.departments.id, schema.bibRecords.departmentId))
     .leftJoin(schema.items, eq(schema.bibRecords.id, schema.items.bibId))
     .where(eq(schema.departments.isActive, true))
-    .groupBy(schema.departments.id, schema.departments.code, schema.departments.name)
-    .orderBy(asc(schema.departments.name));
+    .groupBy(
+      schema.departments.id,
+      schema.departments.institutionId,
+      schema.institutions.code,
+      schema.institutions.name,
+      schema.departments.code,
+      schema.departments.name,
+    )
+    .orderBy(asc(schema.institutions.name), asc(schema.departments.name));
 
-  return rows.map((r: any) => ({
+  const data = rows.map((r: any) => ({
     id: r.id,
     code: r.code,
     name: r.name,
+    institutionId: r.institutionId,
+    institutionCode: r.institutionCode,
+    institutionName: r.institutionName,
     titleCount: Number(r.titleCount || 0),
     totalCopies: Number(r.totalCopies || 0),
   }));
+
+  cachedDepartmentsWithCounts = { data, cachedAt: now };
+  return data;
 }
 
 export interface PatronAccountData {
   profile: {
     id: number;
     cardNo: string;
-    rollNo: string | null;
     employeeId: string | null;
     fullName: string;
     firstName: string;
@@ -604,6 +688,9 @@ export interface PatronAccountData {
     categoryName: string;
     departmentName: string | null;
     institutionName: string | null;
+    libraryId?: number | null;
+    libraryName?: string | null;
+    libraryCode?: string | null;
     cardExpiry: string;
     status: string;
     mustChangePassword: boolean;
@@ -671,7 +758,6 @@ export async function getPatronAccountData(
     .select({
       id: schema.patrons.id,
       cardNo: schema.patrons.cardNo,
-      rollNo: schema.patrons.rollNo,
       employeeId: schema.patrons.employeeId,
       firstName: schema.patrons.firstName,
       middleName: schema.patrons.middleName,
@@ -680,6 +766,9 @@ export async function getPatronAccountData(
       categoryName: schema.patronCategories.name,
       departmentName: schema.departments.name,
       institutionName: schema.institutions.name,
+      libraryId: schema.patrons.libraryId,
+      libraryName: schema.libraries.name,
+      libraryCode: schema.libraries.code,
       cardExpiry: schema.patrons.cardExpiry,
       status: schema.patrons.status,
       mustChangePassword: schema.patrons.mustChangePassword,
@@ -690,6 +779,7 @@ export async function getPatronAccountData(
     .innerJoin(schema.patronCategories, eq(schema.patrons.categoryId, schema.patronCategories.id))
     .leftJoin(schema.departments, eq(schema.patrons.departmentId, schema.departments.id))
     .leftJoin(schema.institutions, eq(schema.patrons.institutionId, schema.institutions.id))
+    .leftJoin(schema.libraries, eq(schema.patrons.libraryId, schema.libraries.id))
     .where(eq(schema.patrons.id, patronId))
     .limit(1);
 
@@ -832,7 +922,6 @@ export async function getPatronAccountData(
     profile: {
       id: p.id,
       cardNo: p.cardNo,
-      rollNo: p.rollNo,
       employeeId: p.employeeId,
       fullName,
       firstName: p.firstName,
@@ -841,6 +930,9 @@ export async function getPatronAccountData(
       categoryName: p.categoryName,
       departmentName: p.departmentName,
       institutionName: p.institutionName,
+      libraryId: p.libraryId,
+      libraryName: p.libraryName,
+      libraryCode: p.libraryCode,
       cardExpiry: String(p.cardExpiry),
       status: p.status,
       mustChangePassword: Boolean(p.mustChangePassword),

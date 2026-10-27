@@ -36,6 +36,7 @@ export interface StaffAuthContext {
     roleCode: string;
     roleName: string;
     libraryId: number;
+    isAvailable: boolean;
   };
   role: typeof schema.roles.$inferSelect;
   permissions: string[];
@@ -98,6 +99,40 @@ async function resolveSessionId(
   }
 }
 
+// In-memory profile cache to eliminate 3x cloud database queries on every navigation
+interface CachedStaffProfile {
+  user: {
+    id: number;
+    username: string;
+    fullName: string;
+    roleId: number;
+    roleCode: string;
+    roleName: string;
+    libraryId: number;
+    isAvailable: boolean;
+  };
+  role: typeof schema.roles.$inferSelect;
+  permissions: string[];
+  cachedAt: number;
+}
+
+const staffProfileCache = new Map<number, CachedStaffProfile>();
+const patronProfileCache = new Map<
+  number,
+  { patron: typeof schema.patrons.$inferSelect; cachedAt: number }
+>();
+const PROFILE_CACHE_TTL_MS = 60 * 1000; // 60 seconds
+
+export function invalidateAuthProfileCache(userId?: number) {
+  if (userId !== undefined) {
+    staffProfileCache.delete(userId);
+    patronProfileCache.delete(userId);
+  } else {
+    staffProfileCache.clear();
+    patronProfileCache.clear();
+  }
+}
+
 /**
  * Retrieves and validates the current active session.
  * Enforces boundary separation between STAFF and PATRON sessions (NFR-S-05).
@@ -116,119 +151,119 @@ export const getCurrentSession = cache(
     }
 
     const session = await getSession(sessionId, db);
-  if (!session) {
-    return null;
-  }
+    if (!session) {
+      return null;
+    }
 
-  // Strict session separation: A patron session must never satisfy a staff check
-  if (userType && session.userType !== userType) {
-    return null;
-  }
+    // Strict session separation: A patron session must never satisfy a staff check
+    if (userType && session.userType !== userType) {
+      return null;
+    }
 
-// In-memory profile cache to eliminate 3x cloud database queries on every navigation
-interface CachedStaffProfile {
-  user: {
-    id: number;
-    username: string;
-    fullName: string;
-    roleId: number;
-    roleCode: string;
-    roleName: string;
-    libraryId: number;
-  };
-  role: typeof schema.roles.$inferSelect;
-  permissions: string[];
-  cachedAt: number;
-}
-const staffProfileCache = new Map<number, CachedStaffProfile>();
-const patronProfileCache = new Map<number, { patron: typeof schema.patrons.$inferSelect; cachedAt: number }>();
-const PROFILE_CACHE_TTL_MS = 60 * 1000; // 60 seconds
-
-  if (session.userType === "STAFF") {
     const nowMs = Date.now();
-    const cached = staffProfileCache.get(session.userId);
-    if (cached && nowMs - cached.cachedAt < PROFILE_CACHE_TTL_MS) {
+
+    if (session.userType === "STAFF") {
+      const cached = staffProfileCache.get(session.userId);
+      if (cached && nowMs - cached.cachedAt < PROFILE_CACHE_TTL_MS) {
+        return {
+          session,
+          user: cached.user,
+          role: cached.role,
+          permissions: cached.permissions,
+        };
+      }
+
+      const userRows = await db
+        .select()
+        .from(schema.users)
+        .where(eq(schema.users.id, session.userId))
+        .limit(1);
+
+      const user = userRows[0];
+      if (!user || !user.isActive) {
+        staffProfileCache.delete(session.userId);
+        // Invalidate orphaned or deactivated session
+        await invalidateSession(sessionId, db);
+        return null;
+      }
+
+      const [roleRows, permRows] = await Promise.all([
+        db
+          .select()
+          .from(schema.roles)
+          .where(eq(schema.roles.id, user.roleId))
+          .limit(1),
+        db
+          .select({ code: schema.permissions.code })
+          .from(schema.rolePermissions)
+          .innerJoin(
+            schema.permissions,
+            eq(schema.rolePermissions.permissionId, schema.permissions.id),
+          )
+          .where(eq(schema.rolePermissions.roleId, user.roleId)),
+      ]);
+
+      const role = roleRows[0];
+      const permissions = permRows.map((r: { code: string }) => r.code);
+
+      const staffUser = {
+        id: user.id,
+        username: user.username,
+        fullName: user.fullName,
+        roleId: user.roleId,
+        roleCode: role?.code ?? "",
+        roleName: role?.name ?? "",
+        libraryId: user.libraryId,
+        isAvailable: user.isAvailable ?? true,
+      };
+
+      staffProfileCache.set(session.userId, {
+        user: staffUser,
+        role,
+        permissions,
+        cachedAt: nowMs,
+      });
+
       return {
         session,
-        user: cached.user,
-        role: cached.role,
-        permissions: cached.permissions,
+        user: staffUser,
+        role,
+        permissions,
       };
     }
 
-    const userRows = await db
-      .select()
-      .from(schema.users)
-      .where(eq(schema.users.id, session.userId))
-      .limit(1);
+    if (session.userType === "PATRON") {
+      const cached = patronProfileCache.get(session.userId);
+      if (cached && nowMs - cached.cachedAt < PROFILE_CACHE_TTL_MS) {
+        return {
+          session,
+          patron: cached.patron,
+        };
+      }
 
-    const user = userRows[0];
-    if (!user || !user.isActive) {
-      staffProfileCache.delete(session.userId);
-      // Invalidate orphaned or deactivated session
-      await invalidateSession(sessionId, db);
-      return null;
+      const patronRows = await db
+        .select()
+        .from(schema.patrons)
+        .where(eq(schema.patrons.id, session.userId))
+        .limit(1);
+
+      const patron = patronRows[0];
+      if (!patron || patron.status !== "ACTIVE") {
+        patronProfileCache.delete(session.userId);
+        await invalidateSession(sessionId, db);
+        return null;
+      }
+
+      patronProfileCache.set(session.userId, {
+        patron,
+        cachedAt: nowMs,
+      });
+
+      return {
+        session,
+        patron,
+      };
     }
-
-    const roleRows = await db
-      .select()
-      .from(schema.roles)
-      .where(eq(schema.roles.id, user.roleId))
-      .limit(1);
-
-    const role = roleRows[0];
-
-    const permRows = await db
-      .select({ code: schema.permissions.code })
-      .from(schema.rolePermissions)
-      .innerJoin(schema.permissions, eq(schema.rolePermissions.permissionId, schema.permissions.id))
-      .where(eq(schema.rolePermissions.roleId, user.roleId));
-
-    const permissions = permRows.map((r: { code: string }) => r.code);
-
-    const staffUser = {
-      id: user.id,
-      username: user.username,
-      fullName: user.fullName,
-      roleId: user.roleId,
-      roleCode: role?.code ?? "",
-      roleName: role?.name ?? "",
-      libraryId: user.libraryId,
-    };
-
-    staffProfileCache.set(session.userId, {
-      user: staffUser,
-      role,
-      permissions,
-      cachedAt: nowMs,
-    });
-
-    return {
-      session,
-      user: staffUser,
-      role,
-      permissions,
-    };
-  }
-
-  if (session.userType === "PATRON") {
-    const patronRows = await db
-      .select()
-      .from(schema.patrons)
-      .where(eq(schema.patrons.id, session.userId))
-      .limit(1);
-
-    const patron = patronRows[0];
-    if (!patron || patron.status !== "ACTIVE") {
-      await invalidateSession(sessionId, db);
-      return null;
-    }
-
-    return {
-      session,
-      patron,
-    };
-  }
 
     return null;
   },

@@ -4,7 +4,7 @@
  * Enforces atomic transactions and SELECT ... FOR UPDATE row-level locking (NFR-R-01).
  */
 
-import { and, desc, eq, or, sql } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { db as defaultDb } from "@/db";
 import * as schema from "@/db/schema";
 import {
@@ -32,6 +32,15 @@ interface Actor {
   id: number;
   fullName: string;
   ipAddress?: string;
+  libraryId?: number;
+  roleCode?: string;
+}
+
+let cachedSettingsConfig: { data: SystemSettingsConfig; cachedAt: number } | null = null;
+const SETTINGS_CONFIG_CACHE_MS = 60 * 1000;
+
+export function invalidateSystemSettingsConfigCache() {
+  cachedSettingsConfig = null;
 }
 
 /**
@@ -40,13 +49,18 @@ interface Actor {
 export async function getSystemSettingsConfig(
   db: DbInstance = defaultDb,
 ): Promise<SystemSettingsConfig> {
+  const now = Date.now();
+  if (cachedSettingsConfig && now - cachedSettingsConfig.cachedAt < SETTINGS_CONFIG_CACHE_MS) {
+    return cachedSettingsConfig.data;
+  }
+
   const rows = await db.select().from(schema.systemSettings);
   const map = new Map<string, string>();
   for (const r of rows) {
     map.set(r.settingKey, r.settingValue);
   }
 
-  return {
+  const config: SystemSettingsConfig = {
     defaultLoanDays: Number(
       map.get("DEFAULT_LOAN_DAYS") ?? DEFAULT_SYSTEM_SETTINGS.defaultLoanDays,
     ),
@@ -70,6 +84,9 @@ export async function getSystemSettingsConfig(
     ),
     opacAllowHolds: (map.get("OPAC_ALLOW_HOLDS") ?? "true") === "true",
   };
+
+  cachedSettingsConfig = { data: config, cachedAt: now };
+  return config;
 }
 
 /**
@@ -88,7 +105,6 @@ export async function lookupPatronForCirculation(
     .select({
       id: schema.patrons.id,
       cardNo: schema.patrons.cardNo,
-      rollNo: schema.patrons.rollNo,
       employeeId: schema.patrons.employeeId,
       username: schema.patrons.username,
       firstName: schema.patrons.firstName,
@@ -119,7 +135,6 @@ export async function lookupPatronForCirculation(
     .where(
       or(
         eq(schema.patrons.cardNo, term),
-        eq(schema.patrons.rollNo, term),
         eq(schema.patrons.employeeId, term),
         eq(schema.patrons.username, term),
       ),
@@ -364,6 +379,8 @@ export async function issueCopy(
           id: schema.patrons.id,
           cardNo: schema.patrons.cardNo,
           categoryId: schema.patrons.categoryId,
+          libraryId: schema.patrons.libraryId,
+          patronType: schema.patrons.patronType,
           status: schema.patrons.status,
           cardExpiry: schema.patrons.cardExpiry,
           firstName: schema.patrons.firstName,
@@ -373,7 +390,6 @@ export async function issueCopy(
         .where(
           or(
             eq(schema.patrons.cardNo, patronTerm),
-            eq(schema.patrons.rollNo, patronTerm),
             eq(schema.patrons.employeeId, patronTerm),
             eq(schema.patrons.username, patronTerm),
           ),
@@ -382,6 +398,36 @@ export async function issueCopy(
 
       if (!patron) {
         throw new Error(`Patron "${params.patronIdentifier}" not found`);
+      }
+
+      // Enforce Multi-Library Boundary: Students can borrow books from their assigned library only
+      if (patron.libraryId && copy.libraryId && patron.libraryId !== copy.libraryId) {
+        const libRows = await tx
+          .select({ id: schema.libraries.id, name: schema.libraries.name })
+          .from(schema.libraries)
+          .where(inArray(schema.libraries.id, [patron.libraryId, copy.libraryId]));
+
+        const patronLib =
+          libRows.find((l: any) => l.id === patron.libraryId)?.name ??
+          `Library #${patron.libraryId}`;
+        const copyLib =
+          libRows.find((l: any) => l.id === copy.libraryId)?.name ?? `Library #${copy.libraryId}`;
+
+        const reason = `Patron is assigned to ${patronLib} and can only borrow books from their assigned library (this copy belongs to ${copyLib}).`;
+        // biome-ignore lint/suspicious/noExplicitAny: refusal error metadata
+        const err: any = new Error(reason);
+        err.isRefusal = true;
+        err.refusalAudit = {
+          actorType: "STAFF",
+          actorId: actor.id,
+          actorName: actor.fullName,
+          action: "CIRC_REFUSAL",
+          entity: "loans",
+          entityId: String(copy.id),
+          details: `Issue refused for patron ${patron.cardNo} on copy ${copy.accessionNo}: ${reason}`,
+          ipAddress: actor.ipAddress,
+        };
+        throw err;
       }
 
       // 3. Fetch Title & Item Type
@@ -584,6 +630,7 @@ export async function returnCopy(
   params: {
     barcodeOrAccession: string;
     referenceDate?: string | Date;
+    deskLibraryId?: number;
   },
   actor: Actor,
   db: DbInstance = defaultDb,
@@ -616,6 +663,7 @@ export async function returnCopy(
       .select({
         id: schema.loans.id,
         patronId: schema.loans.patronId,
+        libraryId: schema.loans.libraryId,
         dueDate: schema.loans.dueDate,
         renewalCount: schema.loans.renewalCount,
       })
@@ -625,6 +673,28 @@ export async function returnCopy(
 
     if (!activeLoan) {
       throw new Error(`Copy "${copy.accessionNo}" is not currently issued`);
+    }
+
+    // Enforce Return Boundary: Books must be returned to the same library from which they were issued
+    const returnDeskLibId =
+      params.deskLibraryId ??
+      (actor.roleCode !== "SUPER_ADMIN" && actor.libraryId ? actor.libraryId : undefined);
+    if (returnDeskLibId && activeLoan.libraryId && returnDeskLibId !== activeLoan.libraryId) {
+      const libRows = await tx
+        .select({ id: schema.libraries.id, name: schema.libraries.name })
+        .from(schema.libraries)
+        .where(inArray(schema.libraries.id, [activeLoan.libraryId, returnDeskLibId]));
+
+      const issuedLibName =
+        libRows.find((l: any) => l.id === activeLoan.libraryId)?.name ??
+        `Library #${activeLoan.libraryId}`;
+      const returnLibName =
+        libRows.find((l: any) => l.id === returnDeskLibId)?.name ??
+        `Library #${returnDeskLibId}`;
+
+      throw new Error(
+        `This book was issued by ${issuedLibName}. Books must be returned to the same library from which they were issued (current desk: ${returnLibName}).`,
+      );
     }
 
     // 3. Close active loan
@@ -686,6 +756,27 @@ export async function returnCopy(
       maxFine: rule.maxFine,
       holidays: holidayDates,
     });
+
+    // Check librarian availability in the loan library (fine exemption policy)
+    const [loanLibRow] = await tx
+      .select({
+        id: schema.libraries.id,
+        name: schema.libraries.name,
+        isLibrarianAvailable: schema.libraries.isLibrarianAvailable,
+      })
+      .from(schema.libraries)
+      .where(eq(schema.libraries.id, activeLoan.libraryId))
+      .limit(1);
+
+    const isLibrarianAvailable = loanLibRow ? loanLibRow.isLibrarianAvailable : true;
+    let fineExempted = false;
+    let fineExemptReason = "";
+
+    if (!isLibrarianAvailable && fineResult.finalOverdueFine > 0) {
+      fineExempted = true;
+      fineExemptReason = `Librarian marked away/unavailable in ${loanLibRow?.name ?? "library"} — fine exempted`;
+      fineResult.finalOverdueFine = 0;
+    }
 
     let fineRecord = null;
     if (fineResult.finalOverdueFine > 0) {
@@ -784,7 +875,9 @@ export async function returnCopy(
         details: `Returned copy ${copy.accessionNo} ("${bib.title}"). Status $\to$ ${assignment.nextCopyStatus}${
           fineResult.finalOverdueFine > 0
             ? `. Overdue fine: ₹${fineResult.finalOverdueFine.toFixed(2)}`
-            : ""
+            : fineExempted
+              ? `. Overdue fine exempted (${fineExemptReason})`
+              : ""
         }${holdAlert ? `. Assigned to hold #${holdAlert.holdId}` : ""}`,
         ipAddress: actor.ipAddress,
       },
@@ -800,6 +893,8 @@ export async function returnCopy(
       title: bib.title,
       daysLate: fineResult.daysLate,
       fineAmount: fineResult.finalOverdueFine,
+      fineExempted,
+      fineExemptReason,
       fineRecord,
       holdAlert,
     };
@@ -1148,6 +1243,367 @@ export async function markCopyLost(
       replacementFee: lostCharge.baseReplacementPrice + lostCharge.processingFee,
       overdueFine: lostCharge.overdueFineToDate,
       totalCharged: lostCharge.totalLostCharge,
+    };
+  });
+}
+
+export interface CirculationPatronSearchResult {
+  id: number;
+  cardNo: string;
+  employeeId: string | null;
+  fullName: string;
+  patronType: string;
+  categoryId: number;
+  categoryName: string;
+  departmentId: number | null;
+  departmentName: string | null;
+  courseId: number | null;
+  courseName: string | null;
+  institutionId: number | null;
+  institutionCode: string | null;
+  status: string;
+  activeLoansCount: number;
+  overdueLoansCount: number;
+  totalOutstandingFines: number;
+}
+
+/**
+ * Searches patrons for circulation desk dropdowns with real-time active loan & fine statistics.
+ */
+export async function searchPatronsForCirculation(
+  options: {
+    query?: string;
+    identifier?: string;
+    patronType?: string;
+    institutionId?: number;
+    courseId?: number;
+    departmentId?: number;
+    hasActiveLoans?: boolean;
+    limit?: number;
+  } = {},
+  db: DbInstance = defaultDb,
+): Promise<CirculationPatronSearchResult[]> {
+  const limit = Math.min(100, Math.max(1, options.limit ?? 30));
+  const conditions = [];
+
+  // Match exact or case-insensitive identifier (Card No or Employee ID)
+  if (options.identifier?.trim()) {
+    const term = options.identifier.trim();
+    conditions.push(
+      or(
+        eq(schema.patrons.cardNo, term),
+        eq(schema.patrons.employeeId, term),
+        eq(schema.patrons.username, term),
+        ilike(schema.patrons.cardNo, term),
+        ilike(schema.patrons.employeeId, term),
+      ),
+    );
+  }
+
+  if (options.query?.trim()) {
+    const term = `%${options.query.trim()}%`;
+    conditions.push(
+      or(
+        ilike(schema.patrons.cardNo, term),
+        ilike(schema.patrons.firstName, term),
+        ilike(schema.patrons.lastName, term),
+        ilike(schema.patrons.employeeId, term),
+        ilike(schema.patrons.email, term),
+        ilike(schema.patrons.username, term),
+      ),
+    );
+  }
+
+  // Patron type filter (STUDENT, FACULTY, STAFF)
+  if (options.patronType && options.patronType !== "ALL") {
+    conditions.push(eq(schema.patrons.patronType, options.patronType));
+  }
+
+  // College / Institution filter
+  if (options.institutionId) {
+    conditions.push(eq(schema.patrons.institutionId, options.institutionId));
+  }
+
+  // Course filter
+  if (options.courseId) {
+    conditions.push(eq(schema.patrons.courseId, options.courseId));
+  }
+
+  // Branch / Department filter
+  if (options.departmentId) {
+    conditions.push(eq(schema.patrons.departmentId, options.departmentId));
+  }
+
+  // Active loans subquery
+  const activeLoansSq = db
+    .select({
+      patronId: schema.loans.patronId,
+      activeCount: sql<number>`count(*)::int`.as("active_count"),
+      overdueCount:
+        sql<number>`count(case when ${schema.loans.dueDate} < CURRENT_DATE then 1 end)::int`.as(
+          "overdue_count",
+        ),
+    })
+    .from(schema.loans)
+    .where(eq(schema.loans.status, "ISSUED"))
+    .groupBy(schema.loans.patronId)
+    .as("active_loans_sq");
+
+  // Outstanding fines subquery
+  const finesSq = db
+    .select({
+      patronId: schema.fines.patronId,
+      finesTotal:
+        sql<number>`coalesce(sum(${schema.fines.amount} - ${schema.fines.paidAmount}), 0)::numeric`.as(
+          "fines_total",
+        ),
+    })
+    .from(schema.fines)
+    .where(eq(schema.fines.status, "OUTSTANDING"))
+    .groupBy(schema.fines.patronId)
+    .as("fines_sq");
+
+  let query = db
+    .select({
+      id: schema.patrons.id,
+      cardNo: schema.patrons.cardNo,
+      employeeId: schema.patrons.employeeId,
+      firstName: schema.patrons.firstName,
+      lastName: schema.patrons.lastName,
+      patronType: schema.patrons.patronType,
+      categoryId: schema.patrons.categoryId,
+      categoryName: schema.patronCategories.name,
+      departmentId: schema.patrons.departmentId,
+      departmentName: schema.departments.name,
+      courseId: schema.patrons.courseId,
+      courseName: schema.courses.name,
+      institutionId: schema.patrons.institutionId,
+      institutionCode: schema.institutions.code,
+      status: schema.patrons.status,
+      activeLoansCount: sql<number>`coalesce(${activeLoansSq.activeCount}, 0)::int`,
+      overdueLoansCount: sql<number>`coalesce(${activeLoansSq.overdueCount}, 0)::int`,
+      totalOutstandingFines: sql<number>`coalesce(${finesSq.finesTotal}, 0)::float`,
+    })
+    .from(schema.patrons)
+    .innerJoin(schema.patronCategories, eq(schema.patrons.categoryId, schema.patronCategories.id))
+    .leftJoin(schema.departments, eq(schema.patrons.departmentId, schema.departments.id))
+    .leftJoin(schema.courses, eq(schema.patrons.courseId, schema.courses.id))
+    .leftJoin(schema.institutions, eq(schema.patrons.institutionId, schema.institutions.id))
+    .leftJoin(activeLoansSq, eq(schema.patrons.id, activeLoansSq.patronId))
+    .leftJoin(finesSq, eq(schema.patrons.id, finesSq.patronId));
+
+  if (options.hasActiveLoans) {
+    conditions.push(sql`coalesce(${activeLoansSq.activeCount}, 0) > 0`);
+  }
+
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions));
+  }
+
+  const rows = await query
+    .orderBy(desc(sql`coalesce(${activeLoansSq.activeCount}, 0)`), schema.patrons.firstName)
+    .limit(limit);
+
+  // biome-ignore lint/suspicious/noExplicitAny: generic row shape
+  return rows.map((r: any) => ({
+    id: r.id,
+    cardNo: r.cardNo,
+    employeeId: r.employeeId,
+    fullName: [r.firstName, r.lastName].filter(Boolean).join(" "),
+    patronType: r.patronType,
+    categoryId: r.categoryId,
+    categoryName: r.categoryName,
+    departmentId: r.departmentId ?? null,
+    departmentName: r.departmentName,
+    courseId: r.courseId ?? null,
+    courseName: r.courseName,
+    institutionId: r.institutionId ?? null,
+    institutionCode: r.institutionCode,
+    status: r.status,
+    activeLoansCount: Number(r.activeLoansCount || 0),
+    overdueLoansCount: Number(r.overdueLoansCount || 0),
+    totalOutstandingFines: Number(r.totalOutstandingFines || 0),
+  }));
+}
+
+export interface CirculationBookSearchResult {
+  itemId: number;
+  bibId: number;
+  accessionNo: string;
+  barcode: string;
+  title: string;
+  authors: string;
+  isbn: string | null;
+  callNumber: string | null;
+  status: string;
+  location: string | null;
+  departmentId?: number | null;
+  departmentName: string | null;
+  // If issued:
+  loanId?: number;
+  patronId?: number;
+  patronName?: string;
+  patronCard?: string;
+  issueDate?: string;
+  dueDate?: string;
+  daysOverdue?: number;
+  isOverdue?: boolean;
+}
+
+/**
+ * Searches physical book copies for circulation desk issue & return dropdowns.
+ */
+export async function searchBooksForCirculation(
+  options: {
+    query?: string;
+    status?: string;
+    patronId?: number;
+    departmentId?: number;
+    institutionId?: number;
+    courseId?: number;
+    limit?: number;
+  } = {},
+  db: DbInstance = defaultDb,
+): Promise<CirculationBookSearchResult[]> {
+  const limit = Math.min(100, Math.max(1, options.limit ?? 30));
+  const conditions = [];
+
+  if (options.query?.trim()) {
+    const term = `%${options.query.trim()}%`;
+    conditions.push(
+      or(
+        ilike(schema.items.accessionNo, term),
+        ilike(schema.items.barcode, term),
+        ilike(schema.items.callNumber, term),
+        ilike(schema.bibRecords.title, term),
+        ilike(schema.bibRecords.authors, term),
+        ilike(schema.bibRecords.isbn, term),
+      ),
+    );
+  }
+
+  if (options.status && options.status !== "ALL") {
+    conditions.push(eq(schema.items.status, options.status));
+  }
+
+  // Active loan subquery
+  const activeLoanSq = db
+    .select({
+      id: schema.loans.id,
+      itemId: schema.loans.itemId,
+      patronId: schema.loans.patronId,
+      issueDate: schema.loans.issueDate,
+      dueDate: schema.loans.dueDate,
+      patronCard: schema.patrons.cardNo,
+      patronFirstName: schema.patrons.firstName,
+      patronLastName: schema.patrons.lastName,
+    })
+    .from(schema.loans)
+    .innerJoin(schema.patrons, eq(schema.loans.patronId, schema.patrons.id))
+    .where(eq(schema.loans.status, "ISSUED"))
+    .as("active_loan_sq");
+
+  if (options.patronId) {
+    conditions.push(eq(activeLoanSq.patronId, options.patronId));
+  } else {
+    // Branch / Department filter on books (only when not querying by specific patron)
+    if (options.departmentId) {
+      // Engineering branches mapping:
+      // If departmentId is an engineering department (CSE: 1, IT: 2, ME: 3, CE: 4, ECE: 5, EE: 6, AI&DS: 49),
+      // also include BTECH (13) and DIPLOMA (14) where cataloged engineering books reside.
+      const engBranchIds = [1, 2, 3, 4, 5, 6, 49];
+      if (engBranchIds.includes(options.departmentId)) {
+        conditions.push(inArray(schema.bibRecords.departmentId, [options.departmentId, 13, 14]));
+      } else {
+        conditions.push(eq(schema.bibRecords.departmentId, options.departmentId));
+      }
+    } else if (options.institutionId) {
+      conditions.push(eq(schema.departments.institutionId, options.institutionId));
+    }
+  }
+
+  let query = db
+    .select({
+      itemId: schema.items.id,
+      bibId: schema.bibRecords.id,
+      accessionNo: schema.items.accessionNo,
+      barcode: schema.items.barcode,
+      title: schema.bibRecords.title,
+      authors: schema.bibRecords.authors,
+      isbn: schema.bibRecords.isbn,
+      callNumber: sql<
+        string | null
+      >`coalesce(${schema.items.callNumber}, ${schema.bibRecords.callNumber})`,
+      status: schema.items.status,
+      location: schema.items.location,
+      departmentId: schema.bibRecords.departmentId,
+      departmentName: schema.departments.name,
+      loanId: activeLoanSq.id,
+      loanPatronId: activeLoanSq.patronId,
+      loanPatronCard: activeLoanSq.patronCard,
+      loanPatronFirstName: activeLoanSq.patronFirstName,
+      loanPatronLastName: activeLoanSq.patronLastName,
+      issueDate: activeLoanSq.issueDate,
+      dueDate: activeLoanSq.dueDate,
+    })
+    .from(schema.items)
+    .innerJoin(schema.bibRecords, eq(schema.items.bibId, schema.bibRecords.id))
+    .leftJoin(schema.departments, eq(schema.bibRecords.departmentId, schema.departments.id))
+    .leftJoin(activeLoanSq, eq(schema.items.id, activeLoanSq.itemId));
+
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions));
+  }
+
+  const rows = await query
+    .orderBy(
+      options.status === "ISSUED" ? desc(activeLoanSq.issueDate) : schema.bibRecords.title,
+      schema.items.accessionNo,
+    )
+    .limit(limit);
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  // biome-ignore lint/suspicious/noExplicitAny: generic row shape
+  return rows.map((r: any) => {
+    let daysOverdue = 0;
+    let isOverdue = false;
+    if (r.dueDate) {
+      const due = new Date(r.dueDate);
+      due.setHours(0, 0, 0, 0);
+      const diffMs = today.getTime() - due.getTime();
+      if (diffMs > 0) {
+        daysOverdue = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+        isOverdue = true;
+      }
+    }
+
+    const patronName = r.loanPatronFirstName
+      ? [r.loanPatronFirstName, r.loanPatronLastName].filter(Boolean).join(" ")
+      : undefined;
+
+    return {
+      itemId: r.itemId,
+      bibId: r.bibId,
+      accessionNo: r.accessionNo,
+      barcode: r.barcode,
+      title: r.title,
+      authors: r.authors,
+      isbn: r.isbn,
+      callNumber: r.callNumber,
+      status: r.status,
+      location: r.location,
+      departmentId: r.departmentId ?? null,
+      departmentName: r.departmentName,
+      loanId: r.loanId ?? undefined,
+      patronId: r.loanPatronId ?? undefined,
+      patronName,
+      patronCard: r.loanPatronCard ?? undefined,
+      issueDate: r.issueDate ? String(r.issueDate) : undefined,
+      dueDate: r.dueDate ? String(r.dueDate) : undefined,
+      daysOverdue,
+      isOverdue,
     };
   });
 }

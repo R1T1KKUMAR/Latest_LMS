@@ -51,7 +51,7 @@ describe("Phase 13: Encodings, Malformed CSVs, and High-Throughput Large Files",
   });
 
   it("2. Successfully strips UTF-8 Byte Order Mark (BOM) without corrupting column headers", async () => {
-    const csvContent = ["roll_no,first_name,last_name,gender", "250001,BOM_Student,One,M"].join(
+    const csvContent = ["card_no,first_name,last_name,gender", "250001,BOM_Student,One,M"].join(
       "\n",
     );
 
@@ -67,13 +67,13 @@ describe("Phase 13: Encodings, Malformed CSVs, and High-Throughput Large Files",
 
     expect(preview.summary.totalRows).toBe(1);
     expect(preview.summary.okCount).toBe(1);
-    expect(preview.rows[0].data?.rollNo).toBe("250001");
+    expect(preview.rows[0].data?.cardNo).toBe("250001");
     expect(preview.rows[0].data?.firstName).toBe("BOM_Student");
   });
 
   it("3. Recovers gracefully from malformed CSV with unclosed quotes, irregular columns, and empty lines", async () => {
     const malformedCsv = [
-      "roll_no,first_name,last_name",
+      "card_no,first_name,last_name",
       "",
       "250002,Normal,Student",
       "   ",
@@ -89,16 +89,16 @@ describe("Phase 13: Encodings, Malformed CSVs, and High-Throughput Large Files",
     expect(preview.summary.totalRows).toBeGreaterThanOrEqual(3);
     const validRows = preview.rows.filter((r) => r.status === "OK");
     expect(validRows.length).toBeGreaterThanOrEqual(1);
-    expect(validRows.some((r) => r.data?.rollNo === "250002")).toBe(true);
+    expect(validRows.some((r) => r.data?.cardNo === "250002")).toBe(true);
   });
 
   it("4. Large-File Test: processes >= 150 rows meeting throughput requirement of >= 100 rows/second (NFR-P-03)", async () => {
-    const lines = ["roll_no,first_name,last_name,gender,dob,department,year,semester,mobile,email"];
+    const lines = ["card_no,first_name,last_name,gender,dob,department,year,semester,mobile,email"];
 
     for (let i = 1; i <= 150; i++) {
-      const roll = `99000${i.toString().padStart(3, "0")}`;
+      const card = `99000${i.toString().padStart(3, "0")}`;
       lines.push(
-        `${roll},Student${i},Batch2026,M,01-01-2004,CSE,1,1,9800000${i.toString().padStart(3, "0")},stu${i}@rbmi.in`,
+        `${card},Student${i},Batch2026,M,01-01-2004,CSE,1,1,9800000${i.toString().padStart(3, "0")},stu${i}@rbmi.in`,
       );
     }
 
