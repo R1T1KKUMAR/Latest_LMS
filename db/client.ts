@@ -217,8 +217,11 @@ export function ensureDbReady(): Promise<void> {
   return globalForDb.dbReady;
 }
 
-// Kick off auto-init eagerly so it's ready before the first request
-if (typeof window === "undefined") {
+// Kick off auto-init eagerly so it's ready before the first request.
+// CLI scripts (db:migrate, db:seed) set SKIP_DB_AUTO_INIT=1 so that Drizzle's
+// journal-based migrator stays the single writer — otherwise the import-time
+// auto-init races migrate() on a fresh database (duplicate CREATE SEQUENCE etc).
+if (typeof window === "undefined" && !process.env.SKIP_DB_AUTO_INIT) {
   ensureDbReady().catch((err) => {
     console.warn(
       "⚠️ Initial DB check/auto-init deferred:",

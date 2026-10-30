@@ -16,8 +16,8 @@
     "test:integration": "vitest run tests/integration",
     "test:e2e": "playwright test",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "tsx --env-file=.env.local db/migrate.ts",
-    "db:seed": "tsx --env-file=.env.local db/seed.ts"
+    "db:migrate": "SKIP_DB_AUTO_INIT=1 tsx --env-file=.env.local db/migrate.ts",
+    "db:seed": "SKIP_DB_AUTO_INIT=1 tsx --env-file=.env.local db/seed.ts"
   },
   "dependencies": {
     "clsx": "^2.1.1",
