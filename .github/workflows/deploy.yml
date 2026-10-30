@@ -1,0 +1,77 @@
+name: Deploy to EC2
+
+# Auto-deploy: every push to main pulls the latest code on the server,
+# rebuilds the Next.js standalone app, restarts the systemd service,
+# and verifies /api/health before marking the run green.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # allow manual "Run workflow" button too
+
+# Never run two deploys at once; a new push cancels a stale running deploy
+concurrency:
+  group: deploy-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Pull, build and restart on the server
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+          ssh -i ~/.ssh/deploy_key \
+              -o StrictHostKeyChecking=accept-new \
+              -o ServerAliveInterval=30 \
+              "$SSH_USER@$SSH_HOST" 'bash -s' <<'REMOTE_SCRIPT'
+            set -euo pipefail
+            export PATH="/usr/local/bin:/usr/bin:$PATH"
+            cd ~/lms
+
+            echo "==> Pulling latest code"
+            git pull --ff-only
+
+            echo "==> Installing dependencies"
+            pnpm install --prod=false --frozen-lockfile
+
+            echo "==> Building (postbuild copies static assets into standalone)"
+            pnpm build
+
+            echo "==> Restarting service"
+            sudo systemctl restart lms
+          REMOTE_SCRIPT
+
+      - name: Health check (wait for the app to come up)
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+          for i in $(seq 1 12); do
+            if ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new \
+                 "$SSH_USER@$SSH_HOST" \
+                 'curl -sf http://localhost:3000/api/health' > /dev/null 2>&1; then
+              echo "✅ Deployment healthy — /api/health responded"
+              exit 0
+            fi
+            echo "waiting for app to come up ($i/12)..."
+            sleep 5
+          done
+
+          echo "❌ Health check FAILED after deploy — recent logs:"
+          ssh -i ~/.ssh/deploy_key "$SSH_USER@$SSH_HOST" \
+            'sudo journalctl -u lms -n 40 --no-pager || true' 2>&1 || true
+          exit 1
