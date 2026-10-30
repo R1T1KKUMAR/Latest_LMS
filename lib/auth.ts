@@ -421,7 +421,15 @@ export async function requirePageAuth(
  */
 export const sessionCookieOptions = {
   httpOnly: true,
-  secure: process.env.NODE_ENV === "production",
+  // Secure cookie flag: on in production by default, but overridable for
+  // HTTP-only deployments (e.g. EC2 t3.micro before HTTPS is set up).
+  // Set COOKIE_SECURE=false when serving over plain HTTP, true/false otherwise.
+  secure:
+    process.env.COOKIE_SECURE === "true"
+      ? true
+      : process.env.COOKIE_SECURE === "false"
+        ? false
+        : process.env.NODE_ENV === "production",
   sameSite: "lax" as const,
   path: "/",
   maxAge: 60 * 60, // 60 minutes
