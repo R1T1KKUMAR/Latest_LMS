@@ -1,7 +1,27 @@
 import { hashPassword } from "@/lib/crypto";
 import { addCalendarDays, formatDateIso } from "@/rules/dates";
+import { sql } from "drizzle-orm";
 import type { AnyDatabase } from "./client";
 import * as schema from "./schema";
+
+/**
+ * Wipes all rows from every table in the public schema (views are untouched)
+ * and resets identity sequences. Used by the CLI seed entrypoint so a partial
+ * or previously-completed seed never collides with unique constraints.
+ */
+export async function resetSeededData(db: AnyDatabase) {
+  await db.execute(
+    sql.raw(
+      `DO $$
+       DECLARE r record;
+       BEGIN
+         FOR r IN (SELECT tablename FROM pg_tables WHERE schemaname = 'public') LOOP
+           EXECUTE format('TRUNCATE TABLE public.%I RESTART IDENTITY CASCADE', r.tablename);
+         END LOOP;
+       END $$;`,
+    ),
+  );
+}
 
 export async function seedDatabase(db: AnyDatabase) {
   console.log("🌱 Seeding database...");
@@ -970,6 +990,18 @@ export async function seedDatabase(db: AnyDatabase) {
 async function main() {
   const { client, db } = await import("./client");
   try {
+    // Idempotency guard: a partially-completed or previously-run seed must not
+    // collide with unique keys (institutions.code, users.username, ...). If the
+    // baseline data is already present, wipe just the seeded rows and start
+    // over so `pnpm db:seed` is always safely re-runnable.
+    const [{ count }] = (await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(schema.users as never)) as unknown as { count: number }[];
+    if (count > 0) {
+      console.log("♻️  Baseline data detected — resetting seeded rows before reseeding...");
+      await resetSeededData(db as any);
+      console.log("♻️  Reset done. Re-seeding from scratch...");
+    }
     await seedDatabase(db as any);
   } catch (err) {
     console.error("❌ Seeding failed:", err);
