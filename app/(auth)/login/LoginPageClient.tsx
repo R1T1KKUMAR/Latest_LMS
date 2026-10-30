@@ -333,22 +333,6 @@ export function LoginPageClient() {
           >
             Sign In as Staff
           </Button>
-
-          <div className="rounded-lg bg-slate-50 border border-slate-200 p-3 text-[11px] text-slate-600 space-y-1">
-            <div className="font-semibold text-slate-800">Seed Demo Accounts:</div>
-            <div>
-              &bull; Super Admin: <code className="font-mono text-slate-900">admin</code> /{" "}
-              <code className="font-mono text-slate-900">Admin@123</code>
-            </div>
-            <div>
-              &bull; Librarian: <code className="font-mono text-slate-900">librarian</code> /{" "}
-              <code className="font-mono text-slate-900">Lib@123</code>
-            </div>
-            <div>
-              &bull; Asst Librarian: <code className="font-mono text-slate-900">assistant</code> /{" "}
-              <code className="font-mono text-slate-900">Asst@123</code>
-            </div>
-          </div>
         </form>
       )}
 
